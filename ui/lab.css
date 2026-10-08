@@ -1,0 +1,11 @@
+/* Lab page: formula line and feature map labels */
+.gl-formula {
+  font-family: var(--mono);
+  font-size: 0.9rem;
+  background: var(--card);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 0.5rem 0.75rem;
+  margin: 0.4rem 0 0.8rem;
+  color: var(--ink);
+}
