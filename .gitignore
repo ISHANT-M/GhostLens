@@ -1,0 +1,25 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Downloaded / trained model weights and benchmarks
+models/
+*.pt
+*.pth
+
+# Temporary outputs
+tmp/
+outputs/
+
+# OS / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Ultralytics run outputs and stray downloaded weights
+runs/
+/*.pt
+
+# Streamlit local secrets
+.streamlit/secrets.toml
