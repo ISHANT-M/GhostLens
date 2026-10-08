@@ -1,0 +1,13 @@
+{
+  "image": "antique_room.jpg",
+  "note": "Boxes checked by eye on the 1280x960 image. Only COCO classes that are really there. The coffee pot and the two lidded pots are not cups, and COCO has no teapot class, so they are not in the ground truth.",
+  "objects": [
+    {"label": "chair", "box": [28, 386, 427, 960]},
+    {"label": "chair", "box": [815, 417, 1245, 960]},
+    {"label": "dining table", "box": [355, 469, 839, 820]},
+    {"label": "cup", "box": [428, 462, 464, 492]},
+    {"label": "cup", "box": [486, 495, 529, 530]},
+    {"label": "cup", "box": [623, 497, 675, 534]},
+    {"label": "cup", "box": [727, 464, 763, 494]}
+  ]
+}
