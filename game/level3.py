@@ -543,7 +543,7 @@ def render() -> None:
     view, scanner = ui.stage("l3")
     with scanner:
         ui.scanner_head("GHOSTLENS MK.II · DETECT", pct(s.battery))
-        model = flow.model_picker(3, profiles(), LIMITS, slot="watchdog")
+        model = flow.model_picker(3, profiles(), LIMITS, slot="watchdog", locked=solved)
     if model is None:
         with view:
             draw_parlour()

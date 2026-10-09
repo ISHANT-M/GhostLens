@@ -428,28 +428,29 @@ def loadrow_html(p: dict, badge: str, selected: bool, locked: bool) -> str:
 LOADOUT_FOOTER = "ms/MB measured here · accuracy published · battery = game rule"
 
 
-def model_picker(level: int, profiles: list[dict], limits: dict, slot: str, note: str = "") -> dict | None:
+def model_picker(level: int, profiles: list[dict], limits: dict, slot: str, note: str = "",
+                 locked: bool = False) -> dict | None:
     # profile keys: id, name, tier, size_mb, latency_ms, accuracy, accuracy_tag, intel (optional).
-    # Returns the profile once loaded.
+    # Returns the profile once loaded. locked: reviewing a cleared chapter, so nothing can be swapped or paid for.
     s = st.session_state
     key = f"l{level}_model"
     chosen = next((p for p in profiles if p["id"] == s.get(key)), None)
     free = device.free_memory(s) + s.resident.get(slot, (None, 0.0))[1]
     st.markdown(f'<div class="gl-limits"><span>≤ {limits["latency_ms"]:.0f} ms</span>'
                 f'<span>{free:.1f} MB free</span></div>', unsafe_allow_html=True)
-    power_locked = False
+    power_locked, review = False, locked
     for p in profiles:
         locked, badge, no_power = card_state(p, slot, limits["latency_ms"])
         power_locked |= no_power
         selected = bool(chosen and chosen["id"] == p["id"])
         st.markdown(loadrow_html(p, badge, selected, locked), unsafe_allow_html=True)
         if st.button("Loaded" if selected else f"Load {p['tier'].lower()}", key=f"{key}_{p['id']}",
-                     disabled=locked or selected, width="stretch"):
+                     disabled=locked or selected or review, width="stretch"):
             s[key] = p["id"]
             s.setdefault(f"l{level}_models_tried", []).append(p["id"])
             device.load_model(s, slot, p["name"], p["size_mb"])
             st.rerun()
-    if power_locked and device.charger_available(s):
+    if power_locked and not review and device.charger_available(s):
         charge_prompt(level, f"l{level}_picker")
     footer = f"{note} · {LOADOUT_FOOTER}" if note else LOADOUT_FOOTER
     st.markdown(f'<div class="gl-loadnote">{footer}</div>', unsafe_allow_html=True)

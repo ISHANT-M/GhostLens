@@ -180,3 +180,14 @@ def test_diff_view_counts_disagreeing_pixels():
 def test_probability_lut_is_monotonic_in_brightness():
     grey = level4.LUT[:, 0].astype(int).sum(axis=1)
     assert all(a <= b for a, b in zip(grey, grey[1:]))
+
+
+@needs_models
+def test_review_is_read_only():
+    at = solve_ch4(page(4))
+    at = click_key(at, "l4_back")
+    battery = at.session_state.battery
+    assert at.toggle(key="l4_int8").disabled
+    loads = [b for b in at.button if b.key and b.key.startswith("l4_model_")]
+    assert loads and all(b.disabled for b in loads)
+    assert at.session_state.battery == battery

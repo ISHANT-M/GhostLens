@@ -499,9 +499,11 @@ def render() -> None:
     with scanner:
         ui.scanner_head("GHOSTLENS MK.II · SEGMENT", pct(s.battery))
         s.setdefault("l4_int8", str(s.get("l4_model", "")).endswith("-int8"))   # match the loaded model on a revisit
-        int8 = st.toggle("Quantize to INT8", key="l4_int8",
+        if solved:   # review is read-only: keep the toggle on the deployed model
+            s.l4_int8 = str(s.get("l4_model", "")).endswith("-int8")
+        int8 = st.toggle("Quantize to INT8", key="l4_int8", disabled=solved,
                          help="Post-training quantization: 8-bit weights and activations instead of 32-bit floats.")
-        model = flow.model_picker(4, profiles(int8), LIMITS, slot="task")
+        model = flow.model_picker(4, profiles(int8), LIMITS, slot="task", locked=solved)
     if model is None:
         with view:
             draw_wall()

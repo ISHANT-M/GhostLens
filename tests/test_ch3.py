@@ -171,3 +171,12 @@ def test_stricter_matching_iou_never_adds_matches():
         dets, truth = random_case(rng)
         tps = [r["tp"] for r in level3.match_sweep(dets, truth, 0.2, level3.MATCH_IOUS)]
         assert all(a >= b for a, b in zip(tps, tps[1:]))
+
+
+@needs_models
+def test_review_is_read_only():
+    at = solve_ch3(page(3))
+    at = click_key(at, "l3_back")
+    loads = [b for b in at.button if b.key and b.key.startswith("l3_model_")]
+    assert loads and all(b.disabled for b in loads)
+    assert not [b for b in at.button if b.key and b.key.startswith("lobby_")]

@@ -345,6 +345,9 @@ def scan_room_window(c: case.Case, model: dict, win: str) -> None:
     if any(r["win"] == win and r["model"] == model["id"] for r in scans):
         st.button("Already scanned", key="l2_scan_window", disabled=True)
         return
+    if 2 in s.completed_levels:     # reviewing a cleared chapter: look, don't spend
+        st.button("Sweep closed", key="l2_scan_window", disabled=True)
+        return
     if not flow.run_button(2, "Scan window", f"{model['name']} on the {window_name(win).lower()}",
                            model["latency_ms"], model["tier"], key="l2_scan_window"):
         return
