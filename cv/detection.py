@@ -107,6 +107,26 @@ def yolo_lines(objects: list[dict], width: int, height: int, class_ids: dict[str
     return lines
 
 
+def input_scale(shape: tuple, imgsz: int = 640) -> float:
+    """YOLO resizes the longest side of the photo to imgsz before the network sees it."""
+    return imgsz / max(shape[:2])
+
+
+def input_size(box: list[float], shape: tuple, imgsz: int = 640) -> tuple[int, int]:
+    """(width, height) in pixels of a box once the photo is resized to the model's input."""
+    k = input_scale(shape, imgsz)
+    return round((box[2] - box[0]) * k), round((box[3] - box[1]) * k)
+
+
+def zoom_crop(img: np.ndarray, box: list[float], pad: int = 12, factor: int = 3) -> np.ndarray:
+    """The box and a little context, blown up with nearest-neighbour so every real pixel stays visible."""
+    h, w = img.shape[:2]
+    x0, y0 = max(0, int(box[0]) - pad), max(0, int(box[1]) - pad)
+    x1, y1 = min(w, int(box[2]) + pad), min(h, int(box[3]) + pad)
+    crop = img[y0:y1, x0:x1]
+    return cv2.resize(crop, (crop.shape[1] * factor, crop.shape[0] * factor), interpolation=cv2.INTER_NEAREST)
+
+
 COLORS = {"tp": (90, 125, 94), "fp": (60, 74, 156), "missed": (47, 134, 183)}  # BGR: green, red, amber
 
 

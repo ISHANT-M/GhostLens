@@ -221,6 +221,21 @@ def bounding_box(mask: np.ndarray) -> tuple[int, int, int, int] | None:
     return int(xs.min()), int(ys.min()), int(xs.max()) + 1, int(ys.max()) + 1
 
 
+def ellipse(k: int) -> np.ndarray:
+    return cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+
+
+def clean_mask(mask: np.ndarray, open_k: int = 0, close_k: int = 0) -> np.ndarray:
+    """Morphology cleanup: opening removes specks smaller than the kernel, closing fills small gaps.
+    A kernel size of 0 (or 1) means that step is off."""
+    out = mask.astype(np.uint8)
+    if open_k > 1:
+        out = cv2.morphologyEx(out, cv2.MORPH_OPEN, ellipse(open_k))
+    if close_k > 1:
+        out = cv2.morphologyEx(out, cv2.MORPH_CLOSE, ellipse(close_k))
+    return out.astype(bool)
+
+
 def clean_share_of_box(mask: np.ndarray) -> float:
     """How much of the bounding box is actually clean wall."""
     box = bounding_box(mask)

@@ -1,0 +1,20 @@
+/* Chapters 3 and 4: the box inspector readout and the chapter 4 view switch (dark theme tokens from styles.css) */
+.gl-inspect {
+  font-family: var(--font-mono, var(--mono));
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.st-key-scanner_l3 [data-testid="stImage"] img,
+.st-key-scanner_l4 [data-testid="stImage"] img {
+  image-rendering: pixelated;          /* the zoomed crop keeps its real pixels */
+  outline: none;
+  border: 1px solid var(--line-strong);
+}
+.st-key-scanner_l3 .st-key-l3_inspect label p,
+.st-key-stage_l4 .st-key-l4_view label p {
+  font-family: var(--font-mono, var(--mono));
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+}
