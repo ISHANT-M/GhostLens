@@ -16,6 +16,12 @@ THUMB_WIDTH = 1280
 MANIFEST = [
     ("level1/room217.jpg", "File:Room 217 Stanley Hotel Estes Park Colorado 2024.jpg",
      "Level 1: source of the dark CCTV frame (clue: room number 217)"),
+    ("level1/room209.jpg", "File:Hotel Colegial Room 209 Door.jpg",
+     "Level 1: case photo pool (clue: room number 209)"),
+    ("level1/room213.jpg", "File:Hotel Icaraí Itaparica Bahia Room Door 2018-0710.jpg",
+     "Level 1: case photo pool (clue: room number 213)"),
+    ("level1/door52.jpg", "File:Door numbered 52.jpg",
+     "Level 1: case photo pool (clue: door number 52)"),
     ("level2/padlock.jpg", "File:Padlock infront of isolated white background 01.jpg",
      "Level 2: single object for classification"),
     ("level2/pocket_watch.jpg", "File:Pocket Watch (Savonette).jpg",

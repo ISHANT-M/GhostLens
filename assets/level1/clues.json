@@ -1,0 +1,19 @@
+{
+  "pass_quality": 0.7,
+  "reference": {"gamma": 2.4, "contrast": 2.5},
+  "note": "clue_box is [x0, y0, x1, y1] as fractions of the frame after the crop, measured by hand on the 960 px image.",
+  "clues": [
+    {"id": "room217", "source": "room217.jpg", "crop": null, "answer": "217", "aliases": [],
+     "label": "Room 217", "floor": "second", "place": "the Stephen King suite",
+     "clue_box": [0.745, 0.08, 0.84, 0.17]},
+    {"id": "room209", "source": "room209.jpg", "crop": null, "answer": "209", "aliases": [],
+     "label": "Room 209", "floor": "second", "place": "the corner room by the service lift",
+     "clue_box": [0.465, 0.06, 0.555, 0.165]},
+    {"id": "room213", "source": "room213.jpg", "crop": null, "answer": "213", "aliases": [],
+     "label": "Room 213", "floor": "second", "place": "the room with the louvred door",
+     "clue_box": [0.44, 0.675, 0.545, 0.765]},
+    {"id": "door52", "source": "door52.jpg", "crop": [0.37, 0.17, 1.0, 0.485], "answer": "52", "aliases": [],
+     "label": "Flat 52", "floor": "first", "place": "the old night porter's flat",
+     "clue_box": [0.46, 0.46, 0.535, 0.595]}
+  ]
+}

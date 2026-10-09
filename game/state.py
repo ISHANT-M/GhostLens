@@ -11,6 +11,7 @@ DEFAULTS = {
     "clues_found": [],
     "demo_mode": False,
     "best_scores": {},
+    "grades": {},
 }
 
 

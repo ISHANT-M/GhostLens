@@ -7,15 +7,21 @@ import cv2
 import numpy as np
 
 
-def load_image(path, width: int = 960) -> np.ndarray:
+def load_image(path, width: int = 960, crop: list[float] | None = None) -> np.ndarray:
     img = cv2.imread(str(path))
     if img is None:
         raise FileNotFoundError(path)
+    if crop:
+        # [x0, y0, x1, y1] as fractions, applied before resizing
+        h, w = img.shape[:2]
+        x0, y0, x1, y1 = crop
+        img = img[round(y0 * h):round(y1 * h), round(x0 * w):round(x1 * w)]
     h, w = img.shape[:2]
     return cv2.resize(img, (width, round(h * width / w)), interpolation=cv2.INTER_AREA)
 
 
-def make_dark_frame(img: np.ndarray, seed: int = 217) -> np.ndarray:
+def make_dark_frame(img: np.ndarray, seed: int = 217,
+                    stamp: str = "CAM 03  2026-10-07  02:17:44") -> np.ndarray:
     """Turn a normal photo into a cheap night-time CCTV frame."""
     rng = np.random.default_rng(seed)
     x = img.astype(np.float32) / 255
@@ -24,7 +30,7 @@ def make_dark_frame(img: np.ndarray, seed: int = 217) -> np.ndarray:
     x = cv2.GaussianBlur(x, (3, 3), 0)          # cheap lens
     x += rng.normal(0, 0.004, x.shape).astype(np.float32)   # sensor noise
     dark = np.clip(x * 255, 0, 255).astype(np.uint8)
-    cv2.putText(dark, "CAM 03  2026-10-07  02:17:44", (16, dark.shape[0] - 18),
+    cv2.putText(dark, stamp, (16, dark.shape[0] - 18),
                 cv2.FONT_HERSHEY_PLAIN, 1.2, (40, 40, 40), 1, cv2.LINE_AA)
     return dark
 

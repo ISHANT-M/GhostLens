@@ -7,6 +7,21 @@ All images are from Wikimedia Commons and used under their stated licences.
   - Author: Larry D. Moore
   - Licence: CC BY 4.0
 
+- `level1/room209.jpg`: Level 1: case photo pool (clue: room number 209)
+  - Source: https://commons.wikimedia.org/wiki/File:Hotel_Colegial_Room_209_Door.jpg
+  - Author: Psycharpax
+  - Licence: CC BY-SA 4.0
+
+- `level1/room213.jpg`: Level 1: case photo pool (clue: room number 213)
+  - Source: https://commons.wikimedia.org/wiki/File:Hotel_Icara%C3%AD_Itaparica_Bahia_Room_Door_2018-0710.jpg
+  - Author: Paul R. Burley
+  - Licence: CC BY-SA 4.0
+
+- `level1/door52.jpg`: Level 1: case photo pool (clue: door number 52)
+  - Source: https://commons.wikimedia.org/wiki/File:Door_numbered_52.jpg
+  - Author: Hans Wolff
+  - Licence: Public domain
+
 - `level2/padlock.jpg`: Level 2: single object for classification
   - Source: https://commons.wikimedia.org/wiki/File:Padlock_infront_of_isolated_white_background_01.jpg
   - Author: Jonatan Svensson Glad
