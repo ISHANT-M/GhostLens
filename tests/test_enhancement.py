@@ -118,3 +118,25 @@ def test_random_augment_keeps_shape():
     for _ in range(10):
         out, applied = enh.random_augment(ref, rng)
         assert out.shape == ref.shape and applied
+
+
+def test_wipe_splits_before_and_after():
+    before = np.zeros((10, 20, 3), np.uint8)
+    after = np.full((10, 20, 3), 200, np.uint8)
+    out = enh.wipe(before, after, 0.5)
+    assert out.shape == before.shape
+    assert (out[:, :9] == 0).all() and (out[:, 12:] == 200).all()
+    assert tuple(out[5, 10]) == enh.BRASS                         # the divider
+    assert np.array_equal(enh.wipe(before, after, 0.0), after)    # no divider at the edges
+    assert np.array_equal(enh.wipe(before, after, 1.0), before)
+
+
+def test_histogram_strip_marks_clipping():
+    _, dark = load(case.CLUES[0])
+    strip = enh.histogram_strip(dark, enh.gamma_correct(dark, 2.4), width=400, height=100)
+    assert strip.shape == (100, 400, 3) and strip.dtype == np.uint8
+    tall = enh.histogram_strip(dark, enh.brightness_contrast(dark, contrast=20), width=400, height=100)
+
+    def white_tick(img):
+        return np.all(img[:, 395:] == enh.CLIP_RED, axis=2).sum()
+    assert white_tick(tall) > white_tick(strip) > 0               # more pixels at 255, taller tick

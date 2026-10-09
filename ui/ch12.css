@@ -1,0 +1,21 @@
+/* Chapters 1 and 2: tool strip, wipe slider, evidence cards and the room scan map. */
+
+/* chapter 1: the tool strip is a row of small preset buttons */
+.st-key-l1_tools { gap: var(--s1); flex-wrap: wrap; }
+.st-key-l1_tools button {
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase;
+  padding: 2px var(--s2); min-height: 0; border-radius: var(--r-sm);
+}
+.st-key-l1_preset_reset button { color: var(--text-dim); }
+
+/* the wipe slider sits right under the image, no label */
+.st-key-stage_l1 [data-testid="stSlider"] { margin-top: calc(-1 * var(--s2)); }
+
+/* chapter 2: evidence cards are a third of the stage, so the probability bars get a narrower name column */
+.st-key-stage_l2 .gl-bar { grid-template-columns: minmax(0, 1fr) 3rem 3.2rem; font-size: 0.78rem; gap: var(--s1); }
+.st-key-stage_l2 .gl-bar.rest { color: var(--text-dim); }
+.st-key-stage_l2 [class*="st-key-l2_tag_"] button,
+.st-key-stage_l2 [class*="st-key-scan_"] button { font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.06em; }
+
+/* the room sweep scanner: select sliders read like a dial */
+.st-key-scanner_l2_room [data-testid="stSelectSlider"] label { font-family: var(--font-mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; }

@@ -187,3 +187,47 @@ def random_augment(img: np.ndarray, rng: np.random.Generator) -> tuple[np.ndarra
         out = np.clip(out + noise, 0, 255).astype(np.uint8)
         applied.append("noise")
     return out, applied or ["unchanged"]
+
+
+# drawing for the chapter 1 stage (plain numpy and OpenCV, so it costs nothing on the battery)
+
+BRASS = (100, 164, 200)      # BGR of #C8A464
+CLIP_RED = (102, 122, 224)   # BGR of #E07A66
+STAGE_BG = (10, 11, 10)
+
+
+def wipe(before: np.ndarray, after: np.ndarray, split: float) -> np.ndarray:
+    """One image: `before` left of the split, `after` right of it, with a brass divider."""
+    w = before.shape[1]
+    x = int(round(np.clip(split, 0, 1) * w))
+    out = np.hstack([before[:, :x], after[:, x:]])
+    if 0 < x < w:
+        cv2.line(out, (x, 0), (x, out.shape[0] - 1), BRASS, 2)
+    return out
+
+
+def histogram_strip(before: np.ndarray, after: np.ndarray, width: int = 768, height: int = 110) -> np.ndarray:
+    """Both brightness histograms on one dark strip: before filled dim, after as a light line.
+
+    Square-root scale so the small bins still show. The red ticks at 0 and 255 grow with the share of
+    pixels stuck there in `after` (the clipping the chapter punishes).
+    """
+    strip = np.full((height, width, 3), STAGE_BG, np.uint8)
+    base = height - 4
+    h0, h1 = np.sqrt(histogram(before)), np.sqrt(histogram(after))
+    top = max(h0.max(), h1.max(), 1e-9)
+    xs = np.linspace(4, width - 5, 256).astype(np.int32)
+
+    def points(h):
+        ys = (base - h / top * (height - 12)).astype(np.int32)
+        return np.stack([xs, ys], axis=1)
+
+    dim = np.vstack([[xs[0], base], points(h0), [xs[-1], base]])
+    cv2.fillPoly(strip, [dim], (70, 74, 72))
+    cv2.polylines(strip, [points(h1)], False, (218, 228, 231), 1, cv2.LINE_AA)
+    cv2.line(strip, (4, base), (width - 5, base), (68, 75, 71), 1)
+    black, white = clipped(after)
+    for x, share in ((2, black), (width - 3, white)):
+        tick = int(8 + min(share * 20, 1) * (height - 16))
+        cv2.line(strip, (x, base), (x, base - tick), CLIP_RED, 3)
+    return strip
