@@ -2,9 +2,13 @@
 
 from collections.abc import Mapping
 
+from game import device
+
 CORRECT_MODES = {1: "Enhance", 2: "Classify", 3: "Detect", 4: "Segment"}
 QUIZ_TARGET = 5
 TIPS_TARGET = 15
+CLEAN_FRAME = 0.88       # reference settings give 0.847, careful cheap tuning reaches about 0.896
+SIDE_CLUES = 4
 
 
 def _solved(store: Mapping) -> set:
@@ -19,8 +23,16 @@ def _best(store: Mapping, level: int) -> float:
     return store.get("best_scores", {}).get(level, 0.0) or 0.0
 
 
+def _lobby_trips(s) -> int:
+    return sum(1 for r in s.get("ledger", []) if r["kind"] == "lobby")
+
+
 def _frugal(s):
-    return _closed(s) and s.get("battery", 0) >= 60
+    return _closed(s) and s.get("battery", 0) >= device.LOW_POWER_BELOW and _lobby_trips(s) == 0
+
+
+def _fumes(s):
+    return s.get("battery_low_mark", s.get("battery")) == 0
 
 
 def _right_tool(s):
@@ -37,7 +49,8 @@ def _quantizer(s):
 
 
 BADGES = [
-    {"id": "frugal", "name": "Frugal", "description": "Closed the case with at least 60 battery left.",
+    {"id": "frugal", "name": "Frugal",
+     "description": f"Closed the case with at least {device.pct(device.LOW_POWER_BELOW)} battery and no lobby trips.",
      "hint": "Finish all four chapters without wasting battery.", "check": _frugal},
     {"id": "right_tool", "name": "Right tool every time",
      "description": "Solved every chapter without trying a wrong mode.",
@@ -48,9 +61,14 @@ BADGES = [
      "hint": "Try the quantized model in chapter 4.", "check": _quantizer},
     {"id": "balanced_eye", "name": "Balanced eye", "description": "Reached F1 of 0.78 or more in chapter 3.",
      "hint": "Tune the threshold so precision and recall are both good.",
-     "check": lambda s: _best(s, 3) >= 0.78},
-    {"id": "clean_frame", "name": "Clean frame", "description": "Scored 85% or more on the chapter 1 frame.",
-     "hint": "Brighten the dark frame without clipping it.", "check": lambda s: _best(s, 1) >= 0.85},
+     "check": lambda s: round(_best(s, 3), 2) >= 0.78},
+    {"id": "clean_frame", "name": "Clean frame",
+     "description": f"Scored {CLEAN_FRAME:.0%} or more on the chapter 1 frame.",
+     "hint": "Tune past the reference settings: brighter plate, no clipping.",
+     "check": lambda s: round(_best(s, 1), 2) >= CLEAN_FRAME},
+    {"id": "thorough", "name": "Thorough", "description": f"Logged all {SIDE_CLUES} side clues.",
+     "hint": "Run the optional side scan after each chapter.",
+     "check": lambda s: len(s.get("side_clues", ())) >= SIDE_CLUES},
     {"id": "scholar", "name": "Scholar", "description": f"Found {TIPS_TARGET} or more loading screen tips.",
      "hint": "Read the tips on loading screens.",
      "check": lambda s: len(s.get("seen_tips", ())) >= TIPS_TARGET},
@@ -59,7 +77,7 @@ BADGES = [
      "hint": "Try the quiz in the field guide.",
      "check": lambda s: len(s.get("quiz_correct", ())) >= QUIZ_TARGET},
     {"id": "fumes", "name": "Running on fumes", "description": "Let the battery hit zero. Oops.",
-     "hint": "Not one to aim for.", "check": lambda s: s.get("battery") == 0},
+     "hint": "Not one to aim for.", "check": _fumes},
 ]
 
 

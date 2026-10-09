@@ -28,6 +28,3 @@ def load_yolo(name: str):
 def file_size_mb(name: str) -> float:
     return model_path(name).stat().st_size / 1e6
 
-
-def param_count(model) -> int:
-    return sum(p.numel() for p in model.model.parameters())

@@ -228,7 +228,3 @@ def clean_share_of_box(mask: np.ndarray) -> float:
         return 0.0
     x0, y0, x1, y1 = box
     return 1 - float(mask[y0:y1, x0:x1].astype(bool).mean())
-
-
-def param_count(model: nn.Module) -> int:
-    return sum(p.numel() for p in model.parameters())

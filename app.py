@@ -4,13 +4,17 @@ os.environ.setdefault("YOLO_OFFLINE", "1")  # no analytics or downloads from ult
 
 import streamlit as st
 
-from game import codex, device, flow, lab, levels, nav, state
+from game import case, codex, device, flow, lab, levels, nav, state
 from ui import components as ui
 
 st.set_page_config(page_title="GhostLens", page_icon="◉", layout="wide")
 state.init_state(st.session_state)
 device.init_device(st.session_state)
 ui.load_css()
+
+# ?case=1234 pins the case for presentations, only if this session hasn't started one yet
+if "case_seed" not in st.session_state and st.query_params.get("case", "").isdigit():
+    st.session_state.case_seed = int(st.query_params["case"])
 
 # hidden looping audio. Browsers only allow sound after a click, so it also starts on the next click anywhere.
 AUDIO = """
@@ -23,6 +27,33 @@ AUDIO = """
   window.parent.document.addEventListener("click", start, { once: true });
 </script>
 """
+
+
+def restart_case() -> None:
+    # a new case, not a new detective: tips, quiz answers and guide XP stay
+    s = st.session_state
+    state.reset_progress(s)
+    device.reset_device(s)
+    case.reset_case(s)
+    for key in [k for k in s if k.startswith("l") and k[1:2].isdigit()]:
+        del s[key]
+    s.pop("loaded_chapters", None)
+    s.pop("grades", None)
+
+
+def lobby_popover() -> None:
+    s = st.session_state
+    if not device.charger_available(s):
+        return
+    n = device.active_level(s, s.current_level)
+    with st.popover("Lobby charger", width="stretch"):
+        st.markdown(f"Walk back down to the lobby and plug GhostLens in. You get "
+                    f"**+{device.pct(device.CHARGER_UNITS)}** battery and lose **{device.CHARGER_XP} XP**. "
+                    f"The trip goes on the Chapter {n} report, so that chapter can't get an A.")
+        if st.button(f"Walk to the lobby · +{device.pct(device.CHARGER_UNITS)} for −{device.CHARGER_XP} XP",
+                     key="lobby_sidebar", width="stretch"):
+            device.lobby_charge(s, s.current_level)
+            st.rerun()
 
 
 def level_page(n: int):
@@ -73,13 +104,8 @@ with st.sidebar:
     if st.toggle("Sound", key="sound", value=True):
         with st.container(key="audio"):
             st.iframe(AUDIO, height=1)
-    if st.button("Restart the case", type="tertiary"):
-        state.reset_progress(st.session_state)
-        device.reset_device(st.session_state)
-        for key in [k for k in st.session_state if k.startswith("l") and k[1:2].isdigit()]:
-            del st.session_state[key]
-        st.session_state.pop("loaded_chapters", None)
-        st.session_state.pop("grades", None)
+    if st.button("Restart the case", type="tertiary", help="New case. The field guide is kept."):
+        restart_case()
         st.switch_page(home)
 
 hud = st.empty()
@@ -88,10 +114,14 @@ page.run()
 # filled after the page ran, so battery and XP include whatever just happened
 s = st.session_state
 header.markdown(
-    '<div class="gl-casefile"><b>GHOSTLENS</b> · CASE 0217<br>'
-    f"SOLVED {len(s.completed_levels)}/{state.LEVEL_COUNT} · CLUES {len(s.clues_found)} · XP {s.xp}</div>",
+    f'<div class="gl-casefile"><b>GHOSTLENS</b> · {case.case_label(s)}<br>'
+    f"SOLVED {len(s.completed_levels)}/{state.LEVEL_COUNT} · CLUES {len(s.clues_found)} "
+    f"+ SIDE {len(s.side_clues)}/4<br>XP {s.xp} · GUIDE XP {s.get('guide_xp', 0)}</div>",
     unsafe_allow_html=True,
 )
-panel.markdown(flow.device_panel_html(), unsafe_allow_html=True)
+with panel.container():
+    st.markdown(flow.device_panel_html(), unsafe_allow_html=True)
+    lobby_popover()
+flow.low_power_toast()
 if s.current_level and page.url_path.startswith("level") and state.is_unlocked(s, s.current_level):
     hud.markdown(flow.hud_html(s.current_level), unsafe_allow_html=True)
