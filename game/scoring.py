@@ -24,5 +24,6 @@ def edge_grade(checks: dict[str, bool]) -> str:
     return "ABCD"[min(failed, 3)]
 
 
-def efficient(used: int, optimal: int, slack: float = 1.5) -> bool:
-    return used <= max(optimal * slack, optimal + 2)
+def efficient(used: int, optimal: int, slack: float = 1.25, grace: int = 5) -> bool:
+    # grace keeps tiny budgets (a 2-unit pass) from failing over one extra try
+    return used <= max(optimal * slack, optimal + grace)

@@ -121,7 +121,6 @@ hr { border-color: var(--rule); }
 }
 .gl-tag.measured { border-color: var(--ok); color: var(--ok); }
 .gl-tag.published { border-color: var(--ink-soft); }
-.gl-tag.example { border-color: var(--warn); color: var(--warn); }
 
 .gl-msg { padding: 0.7rem 1rem; margin: 0.6rem 0; background: var(--card); border: 1px solid var(--rule); }
 .gl-msg.ok { border-left: 3px solid var(--ok); }
@@ -174,6 +173,8 @@ hr { border-color: var(--rule); }
   background: var(--ink); padding: 7px 12px; margin-bottom: 1.1rem;
 }
 .gl-hud .bad { color: #E08A78; }
+.gl-hud .warn { color: #D9B26A; }
+.gl-hud .ok { color: #A9C2A4; }
 .gl-chip { display: inline-block; padding: 1px 7px; margin: 0 2px; border: 1px solid #5B5750; color: #8C877D; }
 .gl-chip.active { background: #EDE8DD; color: var(--ink); border-color: #EDE8DD; }
 .gl-chip.done { color: #A9C2A4; border-color: #5E7D5A; }
@@ -188,6 +189,18 @@ hr { border-color: var(--rule); }
 .gl-device .row.sub { font-size: 0.66rem; opacity: 0.85; margin-top: 2px; }
 .gl-device .meter { height: 5px; background: #E4DED2; margin-top: 3px; }
 .gl-device .meter span { display: block; height: 100%; background: var(--ink-soft); }
+.gl-device.low { border-color: var(--bad); }
+.gl-device.low .head span { color: var(--bad); font-weight: 600; }
+.gl-battery { font-family: var(--mono); font-size: 1.7rem; line-height: 1.1; color: var(--ink); margin: 2px 0 4px; }
+.gl-battery.ok { color: var(--ok); }
+.gl-battery.warn { color: var(--warn); }
+.gl-battery.bad { color: var(--bad); }
+.gl-device .meter.battery { position: relative; height: 8px; }
+.gl-device .meter.battery.ok span { background: var(--ok); }
+.gl-device .meter.battery.warn span { background: var(--warn); }
+.gl-device .meter.battery.bad span { background: var(--bad); }
+.gl-device .meter .tick { position: absolute; top: -3px; bottom: -3px; width: 0; border-left: 1.5px solid var(--bad); }
+.gl-device .meter .tick.start { border-left: 1px dotted var(--ink-soft); }
 
 /* mode choice */
 .gl-choice { margin: 0.4rem 0 0.8rem; font-size: 1.05rem; }
@@ -207,6 +220,7 @@ hr { border-color: var(--rule); }
 .gl-badge { font-family: var(--mono); font-size: 0.68rem; line-height: 1.5; margin-top: 0.45rem; padding: 3px 6px; border: 1.5px solid currentColor; }
 .gl-badge.bad { color: var(--bad); }
 .gl-badge.warn { color: var(--warn); }
+.gl-modelcard .intel { font-family: var(--mono); font-size: 0.7rem; line-height: 1.45; color: #8A6420; border-left: 2px solid var(--warn); padding-left: 6px; margin-top: 0.45rem; }
 .gl-cost { font-family: var(--mono); font-size: 0.78rem; margin: 0.3rem 0; color: var(--ink-soft); }
 
 /* mission report */
@@ -214,6 +228,7 @@ hr { border-color: var(--rule); }
 .gl-report .grade { font-family: var(--mono); font-size: 3rem; line-height: 1; padding: 0.2rem 0.6rem; border: 2px solid currentColor; }
 .gl-report .gA { color: var(--ok); } .gl-report .gB { color: var(--ok); opacity: 0.8; }
 .gl-report .gC { color: var(--warn); } .gl-report .gD { color: var(--bad); }
+.gl-cell { font-family: var(--mono); font-size: 0.62rem; letter-spacing: 0.06em; color: var(--ok); border: 1.5px solid var(--ok); padding: 1px 4px; margin-top: 0.4rem; text-align: center; white-space: nowrap; }
 .gl-report.closed .grade { color: var(--ok); }
 .gl-report table { font-size: 0.8rem; margin-top: 0.4rem; }
 .gl-report td { padding: 2px 10px 2px 0; vertical-align: top; }
@@ -222,3 +237,31 @@ hr { border-color: var(--rule); }
 
 /* the audio iframe stays loaded but takes no space */
 .st-key-audio { position: absolute; width: 0; height: 0; overflow: hidden; }
+
+/* battery rules on the home and about pages */
+.gl-rules ol { margin: 0.4rem 0 0; padding-left: 1.2rem; }
+.gl-rules li { margin: 0.25rem 0; }
+
+/* optional side scan card (header html plus the container around its widgets) */
+[class*="st-key-side_card_"] { border: 1.5px dashed var(--rule); background: var(--card); padding: 0.8rem 1rem; margin: 1rem 0; }
+.gl-side .name { font-weight: 650; font-size: 1.05rem; margin: 0.1rem 0 0.2rem; }
+.gl-side .blurb { color: var(--ink-soft); font-size: 0.92rem; }
+.gl-side .chips { margin-top: 0.4rem; }
+.gl-side .chip { display: inline-block; font-family: var(--mono); font-size: 0.66rem; letter-spacing: 0.06em; border: 1px solid var(--warn); color: var(--warn); padding: 0 6px; margin-right: 4px; }
+.gl-side .gl-stamp { margin-left: 6px; }
+
+/* chapter 3 brief, styled like the mission strip */
+.gl-brief { border: 1px solid var(--rule); border-left: 3px solid var(--warn); background: var(--card); padding: 0.7rem 0.9rem; margin: 0.6rem 0 1rem; }
+.gl-brief .title { font-weight: 650; }
+.gl-brief .rule { font-family: var(--mono); font-size: 0.8rem; color: var(--ink-soft); }
+
+/* battery ledger and case summary tables */
+.gl-ledger, .gl-casesum { width: 100%; font-family: var(--mono); font-size: 0.8rem; border-collapse: collapse; }
+.gl-ledger td, .gl-casesum td { padding: 3px 8px 3px 0; border-bottom: 1px dashed var(--rule); vertical-align: top; }
+.gl-ledger td:last-child { text-align: right; }
+.gl-casesum td:first-child { color: var(--ink-soft); white-space: nowrap; }
+.gl-ledger .ok, .gl-casesum .ok { color: var(--ok); }
+.gl-ledger .bad, .gl-casesum .bad { color: var(--bad); }
+
+/* predict-then-reveal */
+.gl-predict { border: 1px dashed var(--ink-soft); background: var(--card); padding: 0.7rem 1rem; margin: 0.8rem 0 0.4rem; }

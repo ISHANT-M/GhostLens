@@ -54,3 +54,9 @@ def message(text: str, tone: str = "") -> None:
 def lesson(points: list[str], title: str = "WHAT YOU LEARNED") -> None:
     items = "".join(f"<li>{p}</li>" for p in points)
     _html(f'<div class="gl-lesson"><div class="title">{title}</div><ul>{items}</ul></div>')
+
+
+def kv_table(rows: list[tuple[str, str]], cls: str = "gl-ledger") -> str:
+    # two-column table for ledgers and the case summary; values may hold html
+    body = "".join(f"<tr><td>{escape(a)}</td><td>{b}</td></tr>" for a, b in rows)
+    return f'<table class="{cls}">{body}</table>'

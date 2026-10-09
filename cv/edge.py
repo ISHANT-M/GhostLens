@@ -101,5 +101,5 @@ def load_benchmark() -> dict | None:
 
 
 def energy_units(latency_ms: float) -> int:
-    """Gameplay abstraction: one battery unit per 5 ms of measured compute, at least 1 per model run."""
-    return max(1, int(latency_ms / 5 + 0.5))
+    """Gameplay rule: one battery unit (0.1%) per ms of measured compute, at least 1 per run."""
+    return max(1, int(latency_ms + 0.5))
