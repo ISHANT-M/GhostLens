@@ -70,7 +70,7 @@ def loading_screen(chapter: int, title: str, work: list[tuple[str, Callable]]) -
             bar.progress(k / max(len(work), 1), text=label)
             fn()
         while (elapsed := time.time() - start) < MIN_LOADING_SECONDS:
-            bar.progress(min(1.0, elapsed / MIN_LOADING_SECONDS), text="Ready")
+            bar.progress(min(1.0, elapsed / MIN_LOADING_SECONDS), text="Almost ready")
             time.sleep(0.08)
         bar.progress(1.0, text="Ready")
         time.sleep(0.3)
@@ -99,7 +99,8 @@ def hud_html(chapter: int) -> str:
             "open" if state.is_unlocked(s, n) else "locked"
         chips.append(f'<span class="gl-chip {cls}">{chip_label(n, s)}</span>')
     low = "LOW POWER · " if device.low_power(s) else ""
-    return (f'<div class="gl-hud"><span>GHOSTLENS MK.II · CH {chapter}/{state.LEVEL_COUNT}</span>'
+    # the chips already show the chapter, so the left label stays short and the HUD fits on one line
+    return (f'<div class="gl-hud"><span>GHOSTLENS</span>'
             f'<span class="modes">{"".join(chips)}</span>'
             f'<span><span class="{battery_tone(s.battery)}">{low}BATTERY {pct(s.battery)}</span> · '
             f'CASE XP {s.xp}</span></div>')
@@ -114,7 +115,8 @@ def battery_meter(units: int) -> str:
 
 def last_entry_html(entry: dict) -> str:
     sign = "+" if entry["kind"] in ("lobby", "cell") else "−"
-    measured = f"{entry['ms']:.0f} ms measured" if entry["ms"] else entry["kind"]
+    measured = (f"{entry['ms']:.0f} ms measured" if entry["ms"]
+                else {"cell": "A grade", "lobby": f"for {device.CHARGER_XP} XP"}.get(entry["kind"], entry["kind"]))
     return (f"<div class='row'><span>Last</span><span>{entry['what']}</span></div>"
             f"<div class='row sub'><span>{measured}</span><span>{sign}{pct(entry['units'])}</span></div>")
 
@@ -424,7 +426,7 @@ def model_picker(level: int, profiles: list[dict], limits: dict, slot: str, note
 
     st.markdown(
         f'<div class="gl-limits"><span class="gl-kicker">Mission limits</span>'
-        f'<span>latency ≤ {limits["latency_ms"]:.0f} ms</span><span>free model memory {free:.1f} MB</span>'
+        f'<span>latency ≤ {limits["latency_ms"]:.0f} ms</span><span>memory for this model {free:.1f} MB</span>'
         f'<span>battery {pct(s.battery)}</span></div>', unsafe_allow_html=True)
     if note:
         st.caption(note)

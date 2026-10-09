@@ -243,9 +243,9 @@ def resolve_drops(dets: list[dict], name: str) -> tuple[int, str]:
     before = det.evaluate(dets, TRUTH["objects"], PRED_FROM)[1]
     after = det.evaluate(dets, TRUTH["objects"], PRED_TO)[1]
     return drops_answer(which_drops(before, after)), (
-        f"{name}: precision {before['precision']:.0%} → {after['precision']:.0%}, recall {before['recall']:.0%} → "
-        f"{after['recall']:.0%}. A lower threshold only adds boxes. Every match you had stays, so recall can't "
-        "fall. The new boxes are less sure, so precision can.")
+        f"{name} from {PRED_FROM:.2f} to {PRED_TO:.2f}: precision {before['precision']:.0%} → "
+        f"{after['precision']:.0%}, recall {before['recall']:.0%} → {after['recall']:.0%}. A lower threshold only "
+        "adds boxes. Every match you had stays, so recall can't fall. The new boxes are less sure, so precision can.")
 
 
 def drops_reveal(dets: list[dict]) -> None:
@@ -325,7 +325,7 @@ def debrief(dets: list[dict], threshold: float) -> None:
     light = runtime.profile("detectors", LIGHT)
     ui.lesson([
         f"At matching IoU {chosen:.2f}, {at['tp']} of your boxes still count (F1 {at['f1']:.2f}). COCO's mAP50-95 "
-        "averages over 0.50 to 0.95, which is why it's always below mAP50.",
+        "averages over 0.50 to 0.95, which is why it's never higher than mAP50.",
         "The threshold doesn't change the model. Lowering it keeps every match you had, so recall never falls, "
         "and precision pays for the extra boxes.",
         f"{light['name']} was cheapest but its best recall here was {light['best_recall']:.0%}: the cups are only a "

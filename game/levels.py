@@ -23,7 +23,7 @@ LEVELS = {
 
 # what each chapter taught, and the next question in the player's words. Never names the next task.
 BRIDGES = {
-    1: ("fix the input before you spend compute on it",
+    1: ("you should fix the input before you spend compute on it",
         "three objects, one photo each. What is each one?"),
     2: ("one label per image is the cheapest answer when a photo holds one thing",
         "a whole room of things. What is in it, and where is each one?"),

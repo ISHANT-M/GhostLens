@@ -168,7 +168,8 @@ def clip_message(new_clip: float) -> None:
                "Ease off the contrast or brightness.", clip_tone(new_clip))
 
 
-def feedback(s: enh.Settings, legib: float, new_clip: float, quality: float, units: int, box: list[float]) -> None:
+def feedback(s: enh.Settings, legib: float, new_clip: float, quality: float, units: int, box: list[float],
+             solved: bool = False) -> None:
     if clip_tone(new_clip) == "bad":
         clip_message(new_clip)
     elif s.denoise_method == "Non-local means":
@@ -188,7 +189,7 @@ def feedback(s: enh.Settings, legib: float, new_clip: float, quality: float, uni
         ui.message("The frame got lighter but the number didn't get clearer. Brightness adds the same amount to "
                    "every pixel, so the gap between the digits and the plate stays exactly as small.", "warn")
     elif quality >= case.PASS_QUALITY:
-        ui.message("That's readable. Enter the number you can see.", "ok")
+        ui.message("That's readable." if solved else "That's readable. Enter the number you can see.", "ok")
     elif legib > 0.3:
         ui.message(f"Something is showing up near {where(box)}. Keep going.", "")
     else:
@@ -387,7 +388,7 @@ def tool_prediction(clue: dict) -> None:
 DEBRIEF_SETUPS = {
     "Reference (gamma 2.4, contrast 2.5)": case.REFERENCE,
     "Reference + non-local means": {**case.REFERENCE, "denoise_method": "Non-local means"},
-    "Brightness +120 only": {"brightness": 120},
+    "Brightness +100 only": {"brightness": 100},
 }
 
 
@@ -423,7 +424,7 @@ def debrief(clue: dict) -> None:
     ui.lesson([
         f"Non-local means changed quality by {nlm['quality'] - ref['quality']:+.2f} for {ratio:.0f}× the battery "
         "of the reference pass. Expensive isn't automatically better.",
-        f"Brightness +120 on its own scores {bright['quality']:.2f}: every pixel moves by the same amount, so the "
+        f"Brightness +100 on its own scores {bright['quality']:.2f}: every pixel moves by the same amount, so the "
         "digits stay as close to the plate as before.",
         f"{yours} Fix the input before you spend compute on a model.",
     ], title="DEBRIEF")
@@ -473,7 +474,7 @@ def render() -> None:
 
     if not solved and not flow.mode_choice(
             1, "The frame is almost black. What's the cheapest way to get the number out of it?",
-            MODE_OPTIONS, "Enhance", needs="a readable plate in this one frame"):
+            MODE_OPTIONS, "Enhance", needs="a readable number from this one frame"):
         st.image(rgb(dark), width=480)
         ui.caption("EVIDENCE 03-A · AS RECORDED")
         return
@@ -506,7 +507,7 @@ def render() -> None:
                    f"the {case.PASS_QUALITY:.0%} pass mark and the {CLIP_LIMIT:.0%} clipping limit",
                    unsafe_allow_html=True)
         st.altair_chart(histogram_chart(dark, enhanced), width="stretch")
-        feedback(settings, legib, new_clip, quality, energy_units(pipeline_ms), clue["clue_box"])
+        feedback(settings, legib, new_clip, quality, energy_units(pipeline_ms), clue["clue_box"], solved)
 
     st.divider()
     if solved:

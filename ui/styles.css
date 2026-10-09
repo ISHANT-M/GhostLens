@@ -186,6 +186,7 @@ hr { border-color: var(--rule); }
 .gl-device .head { color: var(--ink); font-weight: 600; letter-spacing: 0.06em; margin-bottom: 6px; display: flex; justify-content: space-between; }
 .gl-device .head span { font-weight: 400; color: var(--ink-soft); }
 .gl-device .row { display: flex; justify-content: space-between; gap: 6px; margin-top: 4px; }
+.gl-device .row span:last-child { text-align: right; }
 .gl-device .row.sub { font-size: 0.66rem; opacity: 0.85; margin-top: 2px; }
 .gl-device .meter { height: 5px; background: #E4DED2; margin-top: 3px; }
 .gl-device .meter span { display: block; height: 100%; background: var(--ink-soft); }

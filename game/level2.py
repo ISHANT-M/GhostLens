@@ -171,7 +171,7 @@ def debrief() -> None:
     st.caption(f"{ui.tag('measured')} top-1 labels and latency on this machine", unsafe_allow_html=True)
     light, big = runtime.profile("classifiers", LIGHT), runtime.benchmark()["classifiers"][-1]
     ui.lesson([
-        "Classification answers one question, <b>what does this whole image show?</b>, with a probability for "
+        "Classification answers one question (<b>what does this whole image show?</b>) with a probability for "
         "every class the model knows.",
         f"{big['name']} costs {big['latency_ms'] / light['latency_ms']:.1f}× the battery of {light['name']} per "
         "scan. On one clear object it mostly buys confidence.",
@@ -252,7 +252,8 @@ def size_detail(model_id: str) -> str:
     model = runtime.profile("classifiers", model_id)
     same = not changed_items(top1s(list(OBJECTS)))
     if model_id == LIGHT:
-        return ("same top-1 as the bigger models (measured)" if same
+        # don't give away the debrief prediction (would a bigger model change an answer?)
+        return ("the smallest model, and it named every object" if same
                 else "the light model, though a bigger one disagrees on an object (measured)")
     return (f"{model['name']} gave the same top-1 as the light model, for more battery (measured)" if same
             else f"{model['name']} for more battery")
