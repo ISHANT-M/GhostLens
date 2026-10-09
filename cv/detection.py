@@ -44,7 +44,7 @@ def match(dets: list[dict], truth: list[dict], iou_thr: float = IOU_MATCH) -> di
             fp.append(d)
         else:
             used.add(best)
-            tp.append({**d, "iou": best_iou})
+            tp.append({**d, "iou": best_iou, "truth": best})
     missed = [t for i, t in enumerate(truth) if i not in used]
     return {"tp": tp, "fp": fp, "missed": missed}
 
@@ -60,6 +60,51 @@ def scores(m: dict) -> dict:
 def evaluate(dets: list[dict], truth: list[dict], threshold: float) -> tuple[dict, dict]:
     m = match([d for d in dets if d["conf"] >= threshold], truth)
     return m, scores(m)
+
+
+MIN_OVERLAP = 0.1   # below this a box doesn't really touch an object
+
+REASONS = {
+    "duplicate": "Duplicate: a second box on an object that already has a correct one.",
+    "loose": "Loose box: the right label, but it overlaps the object by less than IoU 0.5.",
+    "other_class": "Wrong label: it sits on a labelled object of another class.",
+    "unlabelled": "Nothing labelled here: no object in our ground truth at this spot.",
+}
+
+
+def false_alarm_reason(d: dict, truth: list[dict], matched: set, iou_thr: float = IOU_MATCH) -> tuple[str, int | None, float]:
+    """(reason, truth index, IoU) for one false alarm."""
+    same = [(iou(d["box"], t["box"]), i) for i, t in enumerate(truth) if t["label"] == d["label"]]
+    other = [(iou(d["box"], t["box"]), i) for i, t in enumerate(truth) if t["label"] != d["label"]]
+    v, i = max(same, default=(0.0, None))
+    if v >= iou_thr and i in matched:
+        return "duplicate", i, v
+    if v >= MIN_OVERLAP:
+        return "loose", i, v
+    v, i = max(other, default=(0.0, None))
+    if v >= MIN_OVERLAP:
+        return "other_class", i, v
+    return "unlabelled", None, v
+
+
+def explain_false_alarms(m: dict, truth: list[dict], iou_thr: float = IOU_MATCH) -> list[dict]:
+    """Every false alarm with the reason it didn't count."""
+    matched = {d["truth"] for d in m["tp"]}
+    out = []
+    for d in m["fp"]:
+        reason, i, v = false_alarm_reason(d, truth, matched, iou_thr)
+        out.append({"det": d, "reason": reason, "truth": i, "iou": v})
+    return out
+
+
+def yolo_lines(objects: list[dict], width: int, height: int, class_ids: dict[str, int]) -> list[str]:
+    """Ground truth boxes as YOLO label lines: class cx cy w h, all as fractions of the image."""
+    lines = []
+    for o in objects:
+        x0, y0, x1, y1 = o["box"]
+        cx, cy = (x0 + x1) / 2 / width, (y0 + y1) / 2 / height
+        lines.append(f"{class_ids[o['label']]} {cx:.4f} {cy:.4f} {(x1 - x0) / width:.4f} {(y1 - y0) / height:.4f}")
+    return lines
 
 
 COLORS = {"tp": (90, 125, 94), "fp": (60, 74, 156), "missed": (47, 134, 183)}  # BGR: green, red, amber

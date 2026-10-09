@@ -62,8 +62,8 @@ def benchmark_all(log=print) -> dict:
         log(f"  {w}")
         row, model = _yolo_row(w, info, parlour, 640)
         dets, _ = det.detect(model, parlour)
-        best = max((det.evaluate(dets, truth, t / 20)[1] for t in range(1, 19)), key=lambda s: s["f1"])
-        row["best_recall"] = round(max(det.evaluate(dets, truth, t / 20)[1]["recall"] for t in range(1, 19)), 2)
+        best = max((det.evaluate(dets, truth, t / 20)[1] for t in range(1, 20)), key=lambda s: s["f1"])
+        row["best_recall"] = round(max(det.evaluate(dets, truth, t / 20)[1]["recall"] for t in range(1, 20)), 2)
         row["best_f1"] = round(best["f1"], 2)
         out["detectors"].append(row)
 
