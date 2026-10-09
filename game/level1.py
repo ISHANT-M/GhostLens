@@ -1,6 +1,5 @@
 """Chapter 1: The Dark Frame (preprocessing and histograms)."""
 
-import json
 from pathlib import Path
 
 import altair as alt
@@ -12,13 +11,16 @@ import streamlit as st
 from cv import detection as det
 from cv import enhancement as enh
 from cv.edge import energy_units
-from game import device, flow, runtime
+from game import case, device, flow, runtime
+from game.device import pct
 from game.levels import completion_panel, finish_level
 from game.scoring import efficient
 from ui import components as ui
 
 ASSETS = Path(__file__).resolve().parent.parent / "assets" / "level1"
-CLUE = json.loads((ASSETS / "clue.json").read_text())
+CAM03 = (217, "CAM 03  2026-10-07  02:17:44")
+CAM04 = (404, "CAM 04  2026-10-07  02:19:12")
+COSTLY = 50     # 5% of a full pack: the cost readout turns amber
 
 DEFAULTS = {
     "l1_gamma": 1.0, "l1_brightness": 0, "l1_contrast": 1.0, "l1_equalizer": "None",
@@ -26,10 +28,49 @@ DEFAULTS = {
 }
 
 
-@st.cache_data
+@st.cache_data(show_spinner=False)
+def frames(source: str, crop: tuple | None, seed: int, stamp: str) -> tuple[np.ndarray, np.ndarray]:
+    reference = enh.load_image(ASSETS / source, crop=list(crop) if crop else None)
+    return reference, enh.make_dark_frame(reference, seed=seed, stamp=stamp)
+
+
+def clue_frames(clue: dict, camera: tuple[int, str] = CAM03) -> tuple[np.ndarray, np.ndarray]:
+    """(clean photo, dark CCTV frame) for one photo of the pool."""
+    return frames(clue["source"], tuple(clue["crop"]) if clue["crop"] else None, *camera)
+
+
 def load_frames() -> tuple[np.ndarray, np.ndarray]:
-    reference = enh.load_image(ASSETS / CLUE["source"])
-    return reference, enh.make_dark_frame(reference)
+    return clue_frames(case.get_case(st.session_state).clue)
+
+
+def normalise(text: str) -> str:
+    return "".join(text.split()).lower()
+
+
+def is_answer(text: str, clue: dict) -> bool:
+    return normalise(text) in {normalise(a) for a in [clue["answer"], *clue["aliases"]]}
+
+
+def where(box: list[float]) -> str:
+    x, y = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+    row = "top" if y < 0.33 else "bottom" if y > 0.66 else "middle"
+    col = "left" if x < 0.33 else "right" if x > 0.66 else "centre"
+    return "the centre" if (row, col) == ("middle", "centre") else f"the {row} {col}"
+
+
+def measure(out: np.ndarray, dark: np.ndarray, reference: np.ndarray, box: list[float]) -> tuple[float, float, float]:
+    """(legibility, newly clipped share, evidence quality) of an enhanced frame."""
+    black0, white0 = enh.clipped(dark)
+    black, white = enh.clipped(out)
+    new_clip = max(0.0, (black + white) - (black0 + white0))
+    legib = enh.legibility(out, reference, box)
+    return legib, new_clip, enh.evidence_quality(legib, new_clip, weight=3)
+
+
+def reference_units(dark: np.ndarray) -> int:
+    """Par for the chapter: one pass with the reference settings, timed live."""
+    _, timings = enh.run_pipeline(dark, enh.Settings(**case.REFERENCE))
+    return energy_units(sum(ms for _, ms in timings))
 
 
 def tone(v: float, good: float, ok: float) -> str:
@@ -48,8 +89,10 @@ def reset_lab() -> None:
 
 
 def controls() -> enh.Settings:
-    for k, v in DEFAULTS.items():
-        st.session_state.setdefault(k, v)
+    # widget values are dropped when another page runs, so a plain copy brings them back
+    s = st.session_state
+    for k, v in s.setdefault("l1_lab", dict(DEFAULTS)).items():
+        s.setdefault(k, v)
 
     st.markdown('<div class="gl-kicker">Tone</div>', unsafe_allow_html=True)
     gamma = st.slider("Gamma", 0.5, 4.0, step=0.1, key="l1_gamma",
@@ -74,6 +117,7 @@ def controls() -> enh.Settings:
     sharpen = st.slider("Sharpen", 0.0, 4.0, step=0.25, key="l1_sharpen")
 
     st.button("Reset lab", on_click=reset_lab, type="tertiary")
+    s.l1_lab = {k: s[k] for k in DEFAULTS}
     return enh.Settings(method, strength, brightness, contrast, gamma, equalizer, clahe_clip, sharpen)
 
 
@@ -95,10 +139,15 @@ def histogram_chart(before: np.ndarray, after: np.ndarray) -> alt.Chart:
     return (zones + areas).properties(height=210).configure_view(stroke=None).configure(background="transparent")
 
 
-def feedback(s: enh.Settings, legib: float, new_clip: float, quality: float) -> None:
+def feedback(s: enh.Settings, legib: float, new_clip: float, quality: float, units: int, box: list[float]) -> None:
     if new_clip > 0.03:
         ui.message(f"<b>{new_clip:.0%} of the frame is now pure black or pure white.</b> Those pixels all have the same "
                    "value, so whatever detail they had is gone for good. Ease off the contrast or brightness.", "bad")
+    elif s.denoise_method == "Non-local means":
+        ui.message(f"<b>Non-local means costs about {pct(units)} of battery per pass.</b> It compares patches across "
+                   "the whole frame, so it is hundreds of times slower than a lookup table. Gamma, contrast and CLAHE "
+                   f"cost about {pct(1)} and are already enough to read this plate. Expensive isn't automatically "
+                   "better.", "warn")
     elif s.denoise_method == "Gaussian blur" and s.denoise_strength >= 3:
         ui.message("The blur is cleaning up the grain, but it's smearing the digits too. Noise and fine detail are "
                    "both small, fast changes, and a blur can't tell them apart.", "warn")
@@ -108,10 +157,10 @@ def feedback(s: enh.Settings, legib: float, new_clip: float, quality: float) -> 
     elif s.brightness > 0 and s.contrast == 1.0 and s.gamma == 1.0 and legib < 0.3:
         ui.message("The frame got lighter but the number didn't get clearer. Brightness adds the same amount to "
                    "every pixel, so the gap between the digits and the plate stays exactly as small.", "warn")
-    elif quality >= CLUE["pass_quality"]:
-        ui.message("That's readable. Enter what you see on the plate next to the door.", "ok")
+    elif quality >= case.PASS_QUALITY:
+        ui.message("That's readable. Enter the number you can see.", "ok")
     elif legib > 0.3:
-        ui.message("Something is showing up near the top right. Keep going.", "")
+        ui.message(f"Something is showing up near {where(box)}. Keep going.", "")
     else:
         ui.message("Still too dark to make anything out. Look at the histogram: almost everything is squeezed "
                    "into the far left.", "")
@@ -157,7 +206,7 @@ def show_detector() -> None:
     dets = st.session_state.get("l1_dark_dets", [])
     c1, c2 = st.columns([1.2, 1])
     c1.image(rgb(det.draw(dark, dets=dets)), width="stretch")
-    c2.markdown(f"**{len(dets)} object(s) found**, and no room number. " + (
+    c2.markdown(f"**{len(dets)} object(s) found**, and no number. " + (
         ", ".join(f"{d['label']} {d['conf']:.0%}" for d in dets) if dets else
         "In the dark frame almost every pixel is between 0 and 15. There's nothing for the network to work with."))
 
@@ -185,7 +234,7 @@ MODE_OPTIONS = {
 WARMUP = [("Reading camera 03", load_frames), ("Loading forensic tools", lambda: enh.Settings())]
 
 
-def report_checks(pipeline_ms: float, new_clip: float) -> dict:
+def report_checks(pipeline_ms: float, new_clip: float, par: int) -> dict:
     used = device.used_in_level(st.session_state, 1)
     misses = flow.mode_misses(1)
     return {
@@ -194,22 +243,92 @@ def report_checks(pipeline_ms: float, new_clip: float) -> dict:
         "No clipped pixels": (new_clip <= 0.01, f"{new_clip:.1%} pushed to pure black/white"),
         "Fast enough for live video": (pipeline_ms <= 1000 / 30, "your pipeline fits one frame at 30 fps"
                                        if pipeline_ms <= 1000 / 30 else "your pipeline is too slow for 30 fps"),
-        "Battery": (efficient(used, 1), f"{used} units used"),
+        "Battery": (efficient(used, par), f"{pct(used)} used, {pct(par)} would have done it"),
     }
 
 
+def cam04_clue(c: case.Case) -> str:
+    return f"CAM 04: figure passing {c.cam04['label']} at 02:19"
+
+
+def show_cam04() -> None:
+    c = case.get_case(st.session_state)
+    done = st.session_state.get("l1_cam04")
+    if not done:
+        return
+    reference, dark = clue_frames(c.cam04, CAM04)
+    out, _ = enh.run_pipeline(dark, done["settings"])
+    a, b = st.columns(2)
+    with a:
+        st.image(rgb(dark), width="stretch")
+        ui.caption("EVIDENCE 04-A · AS RECORDED")
+    with b:
+        st.image(rgb(out), width="stretch")
+        ui.caption(f"EVIDENCE 04-A · ENHANCED · QUALITY {done['quality']:.0%}")
+
+
+def cam04_scan(settings: enh.Settings, pipeline_ms: float) -> flow.SideScan:
+    c = case.get_case(st.session_state)
+
+    def run() -> bool:
+        reference, dark = clue_frames(c.cam04, CAM04)
+        out, _ = enh.run_pipeline(dark, settings)
+        quality = measure(out, dark, reference, c.cam04["clue_box"])[2]
+        st.session_state.l1_cam04 = {"settings": settings, "quality": quality}
+        return quality >= case.PASS_QUALITY
+
+    return flow.SideScan(
+        key="cam04", title="CAM 04 · stairwell",
+        blurb=f"Camera 04 covers the stairwell by {c.cam04['place']}. It kept recording two minutes longer than "
+              "camera 03, just as dark. Run your current lab settings on its last frame. It's logged if the "
+              f"evidence quality reaches {case.PASS_QUALITY:.0%}.",
+        what="Forensic pass on CAM 04", latency_ms=pipeline_ms, reward_xp=20, clue=cam04_clue(c),
+        run=run, show=show_cam04, tip_topic="Histograms")
+
+
+def submit_form(clue: dict, pipeline_ms: float, quality: float, new_clip: float, dark: np.ndarray) -> None:
+    s = st.session_state
+    units = energy_units(pipeline_ms)
+    ui.readouts([("Forensic pass", f"≈{pct(units)}", "warn" if units >= COSTLY else ""),
+                 ("Pipeline time", f"{pipeline_ms:.1f} ms", ""),
+                 ("Battery left", pct(s.battery), flow.battery_tone(s.battery))])
+    st.caption("Each submit runs the full pass with the tools you have on, and costs what it measured. "
+               "Non-local means is the expensive one.")
+    with st.form("l1_clue", border=False):
+        c1, c2 = st.columns([2, 1], vertical_alignment="bottom")
+        answer = c1.text_input("What number is on the plate?", placeholder="e.g. 104")
+        submitted = c2.form_submit_button(f"Analyze clue · ≈{pct(units)}", type="primary", key="l1_submit")
+    st.markdown(f'<div class="gl-cost">≈{pct(units)} per pass → ≈{pct(max(0, s.battery - units))} left</div>',
+                unsafe_allow_html=True)
+    if not submitted:
+        return
+    s.l1_attempts = s.get("l1_attempts", 0) + 1
+    flow.run_cost(1, "Forensic pass", pipeline_ms)
+    if not is_answer(answer, clue):
+        ui.message("That isn't what the plate says. Get the frame clearer and look again.", "bad")
+    elif quality < case.PASS_QUALITY:
+        ui.message(f"Right number, but at {quality:.0%} evidence quality nobody would accept this frame. "
+                   f"Get it to {case.PASS_QUALITY:.0%} and submit again.", "warn")
+    else:
+        finish_level(1, quality, s.l1_attempts, report_checks(pipeline_ms, new_clip, reference_units(dark)),
+                     clue=clue["label"])
+
+
 def render() -> None:
+    s = st.session_state
+    c = case.get_case(s)
+    clue = c.clue
     ui.scene_header(
         "CHAPTER 1 · CAM 03 · 2026-10-07 02:17:44",
         "The Dark Frame",
-        "Camera 03 watches the corridor outside the Stephen King suite. It stopped recording at 02:17, and this "
-        "is the last frame it saved. The night staff say there's a room number in it. Bring it back.",
+        f"Camera 03 watches the corridor outside {clue['place']}. It stopped recording at 02:17, and this is the "
+        "last frame it saved. The night staff say there's a number in it. Bring it back.",
     )
-    reference, dark = load_frames()
-    solved = 1 in st.session_state.completed_levels
+    reference, dark = clue_frames(clue)
+    solved = 1 in s.completed_levels
 
     if not solved and not flow.mode_choice(
-        1, "The frame is almost black. What's the cheapest way to get the room number out of it?",
+        1, "The frame is almost black. What's the cheapest way to get the number out of it?",
         MODE_OPTIONS, "Enhance"):
         st.image(rgb(dark), width=480)
         ui.caption("EVIDENCE 03-A · AS RECORDED")
@@ -222,11 +341,9 @@ def render() -> None:
 
     enhanced, timings = enh.run_pipeline(dark, settings)
     pipeline_ms = sum(ms for _, ms in timings)
-    black0, white0 = enh.clipped(dark)
+    black0, _ = enh.clipped(dark)
     black, white = enh.clipped(enhanced)
-    new_clip = max(0.0, (black + white) - (black0 + white0))
-    legib = enh.legibility(enhanced, reference, CLUE["clue_box"])
-    quality = enh.evidence_quality(legib, new_clip, weight=3)
+    legib, new_clip, quality = measure(enhanced, dark, reference, clue["clue_box"])
 
     with view_col:
         a, b = st.columns(2)
@@ -241,36 +358,20 @@ def render() -> None:
             ("Pure black", f"{black:.1%}", "bad" if black > black0 + 0.02 else ""),
             ("Pure white", f"{white:.1%}", "bad" if white > 0.02 else ""),
             ("Clue legibility", f"{legib:.0%}", tone(legib, 0.75, 0.4)),
-            ("Evidence quality", f"{quality:.0%}", tone(quality, CLUE["pass_quality"], 0.4)),
+            ("Evidence quality", f"{quality:.0%}", tone(quality, case.PASS_QUALITY, 0.4)),
         ])
         st.altair_chart(histogram_chart(dark, enhanced), width="stretch")
-        feedback(settings, legib, new_clip, quality)
+        feedback(settings, legib, new_clip, quality, energy_units(pipeline_ms), clue["clue_box"])
 
     st.divider()
     if solved:
-        completion_panel(1, [("Clue recovered", CLUE["answer"]),
-                             ("Best evidence quality", f"{st.session_state.best_scores.get(1, quality):.0%}")])
+        completion_panel(1, [("Clue recovered", clue["label"]),
+                             ("Best evidence quality", f"{s.best_scores.get(1, quality):.0%}")],
+                         par=reference_units(dark))
+        if c.cam04:
+            flow.side_scan(1, cam04_scan(settings, pipeline_ms))
     else:
-        units = energy_units(pipeline_ms)
-        ui.readouts([("Forensic pass", f"{units} unit{'s' if units != 1 else ''}", ""),
-                     ("Pipeline time", f"{pipeline_ms:.1f} ms", ""),
-                     ("Battery left", f"{st.session_state.battery}", "")])
-        st.caption("Each submit runs the full pass with the tools you have on. Non-local means is the expensive one.")
-        with st.form("l1_clue", border=False):
-            c1, c2 = st.columns([2, 1], vertical_alignment="bottom")
-            answer = c1.text_input("What number is on the plate?", placeholder="e.g. 104")
-            submitted = c2.form_submit_button("Analyze clue", type="primary")
-        if submitted:
-            st.session_state.l1_attempts = st.session_state.get("l1_attempts", 0) + 1
-            flow.run_cost(1, "Forensic pass", pipeline_ms)
-            if answer.strip() != CLUE["answer"]:
-                ui.message("That isn't what the plate says. Get the frame clearer and look again.", "bad")
-            elif quality < CLUE["pass_quality"]:
-                ui.message(f"Right number, but at {quality:.0%} evidence quality nobody would accept this frame. "
-                           f"Get it to {CLUE['pass_quality']:.0%} and submit again.", "warn")
-            else:
-                finish_level(1, quality, st.session_state.l1_attempts, report_checks(pipeline_ms, new_clip),
-                             clue=f"Room {CLUE['answer']}")
+        submit_form(clue, pipeline_ms, quality, new_clip, dark)
 
     ui.lesson([
         "Process the input before you spend compute on it. Cheap OpenCV steps can make an expensive model unnecessary.",

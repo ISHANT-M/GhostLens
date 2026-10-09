@@ -10,29 +10,41 @@ from cv import classification as clf
 from cv import detection as det
 from cv.edge import CLASSIFIERS, energy_units
 from cv.models import ModelMissing
-from game import device, flow, runtime
+from game import case, device, flow, runtime
+from game.device import pct
 from game.levels import completion_panel, finish_level
 from game.scoring import efficient
 from ui import components as ui
 
 ASSETS = Path(__file__).resolve().parent.parent / "assets" / "level2"
-OBJECTS = {
-    "padlock": ("padlock.jpg", "EVIDENCE 217-A · DESK"),
-    "pocket watch": ("pocket_watch.jpg", "EVIDENCE 217-B · DESK DRAWER"),
-    "teddy bear": ("teddy_bear.jpg", "EVIDENCE 217-C · ARMCHAIR"),
-}
-ANCHOR = "pocket watch"
+OBJECTS = {"padlock": "padlock.jpg", "pocket watch": "pocket_watch.jpg", "teddy bear": "teddy_bear.jpg"}
+ON = {"padlock": "on", "pocket watch": "in", "teddy bear": "in"}
 ROOM_PHOTO = "living_room.jpg"
 LIMITS = {"latency_ms": 30}
-QUIZ = {
-    "The room contains a window shade, and probably nothing else.":
-        "No. The model always spreads 100% over its 1000 classes for the whole picture. "
-        "A low top score usually means several things are competing, not that the room is empty.",
-    "The window shade is in the middle of the photo, so that's where to look.":
-        "Classification doesn't produce a location at all. There's no 'middle' in a list of 1000 numbers.",
-    "The photo as a whole looks most like 'window shade'. It doesn't say what else is there, how many, or where.":
-        None,
-}
+SCOUT = "yolo26n.pt"
+
+
+def article(word: str) -> str:
+    return f"an {word}" if word[0] in "aeiou" else f"a {word}"
+
+
+def quiz(label: str) -> dict[str, str | None]:
+    """Three readings of the room scan, built from the label the model really gave. The last one is right."""
+    return {
+        f"The room contains {article(label)}, and probably nothing else.":
+            "No. The model always spreads 100% over its 1000 classes for the whole picture. "
+            "A low top score usually means several things are competing, not that the room is empty.",
+        f"The {label} is in the middle of the photo, so that's where to look.":
+            "Classification doesn't produce a location at all. There's no 'middle' in a list of 1000 numbers.",
+        f"The photo as a whole looks most like '{label}'. It doesn't say what else is there, how many, or where.":
+            None,
+    }
+
+
+def evidence(c: case.Case) -> list[tuple[str, str]]:
+    """(object, caption) in this case's card order."""
+    return [(name, f"EVIDENCE {c.number}-{'ABC'[i]} · {case.ANCHORS[name]['place'].removeprefix('the ').upper()}")
+            for i, name in enumerate(c.evidence_order)]
 
 
 @st.cache_data(show_spinner=False)
@@ -69,25 +81,28 @@ def show_wrong() -> None:
         "A classifier trained on ImageNet's 1000 classes knows padlocks."))
 
 
-MODE_OPTIONS = {
-    "Classify": {
-        "blurb": "One label for the whole image. The cheapest model run.",
-        "verdict": "Each photo shows one object, so 'what is it?' is the whole question. "
-                   "Classification answers it for the least compute.",
-    },
-    "Detect": {
-        "blurb": "Find every object, with a box and a label for each.",
-        "run": wrong_mode("yolo26s.pt", "detectors", "YOLO26s detection"), "show": show_wrong,
-        "verdict": "You paid for boxes you didn't need, and the detector doesn't even know what a padlock is. "
-                   "With one object per photo there's nothing to locate. Use the cheapest task that answers the question.",
-    },
-    "Segment": {
-        "blurb": "Label every single pixel and outline each object.",
-        "run": wrong_mode("yolo26s-seg.pt", "segmenters", "YOLO26s-seg"), "show": show_wrong,
-        "verdict": "Segmentation predicts something for every pixel, which is the most expensive way to ask "
-                   "'what is this?'. It cost the most battery and still couldn't name a padlock.",
-    },
-}
+def mode_options() -> dict:
+    return {
+        "Classify": {
+            "blurb": "One label for the whole image. The cheapest model run.",
+            "verdict": "Each photo shows one object, so 'what is it?' is the whole question. "
+                       "Classification answers it for the least compute.",
+        },
+        "Detect": {
+            "blurb": "Find every object, with a box and a label for each.",
+            "run": wrong_mode("yolo26s.pt", "detectors", "YOLO26s detection"), "show": show_wrong,
+            "tier": "Balanced", "latency_ms": runtime.profile("detectors", "yolo26s.pt")["latency_ms"],
+            "verdict": "You paid for boxes you didn't need, and the detector doesn't even know what a padlock is. "
+                       "With one object per photo there's nothing to locate. Use the cheapest task that answers the question.",
+        },
+        "Segment": {
+            "blurb": "Label every single pixel and outline each object.",
+            "run": wrong_mode("yolo26s-seg.pt", "segmenters", "YOLO26s-seg"), "show": show_wrong,
+            "tier": "Balanced", "latency_ms": runtime.profile("segmenters", "yolo26s-seg.pt")["latency_ms"],
+            "verdict": "Segmentation predicts something for every pixel, which is the most expensive way to ask "
+                       "'what is this?'. It cost the most battery and still couldn't name a padlock.",
+        },
+    }
 
 
 def warm() -> None:
@@ -115,54 +130,61 @@ def prob_bars(result: dict) -> None:
     st.markdown(rows, unsafe_allow_html=True)
 
 
-def scan_button(name: str, model: dict, key: str) -> None:
-    units = energy_units(model["latency_ms"])
-    if st.button(f"Scan  ·  {units} unit{'s' if units != 1 else ''}", key=key, width="stretch"):
-        flow.run_cost(2, f"{model['name']} on {name}", model["latency_ms"])
+def scan_button(name: str, what: str, model: dict, key: str) -> None:
+    if flow.run_button(2, "Scan", f"{model['name']} on {what}", model["latency_ms"], model["tier"], key=key,
+                       primary=False):
         st.session_state.l2_scanned[name] = model["id"]
         st.rerun()
 
 
-def scan_objects(model: dict) -> None:
+def scan_objects(c: case.Case, model: dict) -> None:
     scanned = st.session_state.l2_scanned
     cols = st.columns(3, gap="medium")
-    for col, (name, (filename, label)) in zip(cols, OBJECTS.items()):
+    for col, (name, caption) in zip(cols, evidence(c)):
         with col:
-            st.image(card_photo(filename), width="stretch")
-            ui.caption(label)
+            st.image(card_photo(OBJECTS[name]), width="stretch")
+            ui.caption(caption)
             if name in scanned:
-                prob_bars(scan(filename, scanned[name]))
+                prob_bars(scan(OBJECTS[name], scanned[name]))
                 st.caption(f"scanned with {runtime.profile('classifiers', scanned[name])['name']}")
             else:
-                scan_button(name, model, f"scan_{name}")
+                scan_button(name, f"the {name}", model, f"scan_{name}")
 
 
-def pick_anchor() -> bool:
-    scanned = st.session_state.l2_scanned
-    if st.session_state.get("l2_anchor_found"):
-        top_label, top_p = scan(OBJECTS[ANCHOR][0], scanned[ANCHOR])["top"][0]
+def pick_anchor(c: case.Case) -> bool:
+    s = st.session_state
+    scanned = s.l2_scanned
+    anchor = case.ANCHORS[c.anchor]
+    if s.get("l2_anchor_found"):
+        top_label, top_p = scan(OBJECTS[c.anchor], scanned[c.anchor])["top"][0]
         ui.message(
-            f"<b>Entity profile: THE TIMEKEEPER.</b> Anchored to the pocket watch. GhostLens's top class was "
-            f"<span class='mono'>{top_label}</span> at {top_p:.0%}. Close, but not the real name: ImageNet has "
-            "no 'pocket watch' class, so the nearest one it knows wins. A classifier can only ever answer with "
-            "one of the labels it was trained on.", "ok")
+            f"<b>Entity profile: {anchor['entity'].upper()}.</b> Anchored to the {c.anchor}. GhostLens's top class "
+            f"was <span class='mono'>{top_label}</span> at {top_p:.0%}. {anchor['reveal']} A classifier can only "
+            "ever answer with one of the labels it was trained on.", "ok")
         return True
 
-    st.markdown("**The manager's note says the thing in this room *keeps hours*. Which object is it anchored to?**")
+    st.markdown(f'<div class="gl-choice"><div class="gl-kicker">The manager\'s note</div>The thing in this room '
+                f'<i>{anchor["riddle"]}</i>. Which object is it anchored to?</div>', unsafe_allow_html=True)
     c1, c2 = st.columns([3, 1], vertical_alignment="bottom")
-    choice = c1.radio("Anchor object", list(OBJECTS), horizontal=True, index=None, label_visibility="collapsed")
+    choice = c1.radio("Anchor object", list(c.evidence_order), horizontal=True, index=None, key="l2_anchor_choice",
+                      label_visibility="collapsed")
     if c2.button("Tag as anchor", disabled=choice is None):
-        st.session_state.l2_attempts = st.session_state.get("l2_attempts", 0) + 1
+        s.l2_attempts = s.get("l2_attempts", 0) + 1
         if choice not in scanned:
             ui.message("Scan it first. You're guessing from the photo, not from GhostLens.", "warn")
-        elif choice == ANCHOR:
-            st.session_state.l2_anchor_found = True
+        elif choice == c.anchor:
+            s.l2_anchor_found = True
+            s.l2_anchor_label = scan(OBJECTS[choice], scanned[choice])["top"][0][0]
             st.rerun()
         else:
-            label, p = scan(OBJECTS[choice][0], scanned[choice])["top"][0]
-            ui.message(f"GhostLens says <span class='mono'>{label}</span> ({p:.0%}). "
-                       "Nothing about that keeps hours.", "bad")
+            label, p = scan(OBJECTS[choice], scanned[choice])["top"][0]
+            ui.message(f"GhostLens says <span class='mono'>{label}</span> ({p:.0%}). {anchor['miss']}", "bad")
     return False
+
+
+def par() -> int:
+    """Four scans with the light classifier: three objects and the guest photo."""
+    return 4 * energy_units(runtime.profile("classifiers", "yolo26n-cls.pt")["latency_ms"])
 
 
 def report_checks(model_id: str) -> dict:
@@ -170,7 +192,6 @@ def report_checks(model_id: str) -> dict:
     light = runtime.profile("classifiers", "yolo26n-cls.pt")
     model = runtime.profile("classifiers", model_id)
     used = device.used_in_level(s, 2)
-    optimal = 4 * energy_units(light["latency_ms"])
     misses = flow.mode_misses(2)
     return {
         "Cheapest task that works": (misses == 0, "classification first time" if misses == 0
@@ -178,78 +199,123 @@ def report_checks(model_id: str) -> dict:
         "Right-sized model": (model_id == light["id"], "the light model named every object correctly"
                               if model_id == light["id"] else f"{model['name']} gave the same answers for more battery"),
         "Latency target": (model["latency_ms"] <= LIMITS["latency_ms"], f"≤ {LIMITS['latency_ms']} ms per scan"),
-        "Battery": (efficient(used, optimal), f"{used} units used, {optimal} would have done it"),
+        "Battery": (efficient(used, par()), f"{pct(used)} used, {pct(par())} would have done it"),
     }
 
 
-def room_scan(model: dict) -> None:
+def room_scan(c: case.Case, model: dict) -> None:
+    s = st.session_state
+    place = case.ANCHORS[c.anchor]["place"]
     st.subheader("Where did it go?", anchor=False)
-    st.markdown('<p class="gl-story">At 03:58 the watch was gone from the drawer. A guest downstairs sent this '
-                "photo of their sitting room: \"something moved in here\". You point GhostLens at it, still in "
+    st.markdown(f'<p class="gl-story">At 03:58 the {c.anchor} was gone from {place}. A guest downstairs sent this '
+                'photo of their sitting room: "something moved in here". You point GhostLens at it, still in '
                 "Classify mode.</p>", unsafe_allow_html=True)
     left, right = st.columns([1.3, 1], gap="large")
     with left:
         st.image(str(ASSETS / ROOM_PHOTO), width="stretch")
         ui.caption("EVIDENCE 112-A · GUEST PHOTO · 03:58")
     with right:
-        if "room" not in st.session_state.l2_scanned:
-            scan_button("room", model, "scan_room")
+        if "room" not in s.l2_scanned:
+            scan_button("room", "the guest photo", model, "scan_room")
             return
-        prob_bars(scan(ROOM_PHOTO, st.session_state.l2_scanned["room"]))
+        result = scan(ROOM_PHOTO, s.l2_scanned["room"])
+        prob_bars(result)
         st.caption("That's the whole answer. One list of scores for the entire photo.")
 
-    if 2 in st.session_state.completed_levels:
+    if 2 in s.completed_levels:
         return
-    answer = st.radio("What does this result actually tell you?", list(QUIZ), index=None)
+    options = quiz(result["top"][0][0])
+    answer = st.radio("What does this result actually tell you?", list(options), index=None, key="l2_quiz")
     if st.button("Log answer", disabled=answer is None, type="primary"):
-        st.session_state.l2_attempts = st.session_state.get("l2_attempts", 0) + 1
-        if QUIZ[answer]:
-            ui.message(QUIZ[answer], "bad")
+        s.l2_attempts = s.get("l2_attempts", 0) + 1
+        if options[answer]:
+            ui.message(options[answer], "bad")
         else:
-            wrong = max(st.session_state.l2_attempts - 2, 0)  # a clean run is one tag + one answer
-            finish_level(2, max(0.0, 1 - 0.25 * wrong), wrong + 1, report_checks(model["id"]), clue="Timekeeper")
+            wrong = max(s.l2_attempts - 2, 0)  # a clean run is one tag + one answer
+            finish_level(2, max(0.0, 1 - 0.25 * wrong), wrong + 1, report_checks(model["id"]),
+                         clue=case.ANCHORS[c.anchor]["entity"])
+
+
+# side scan: look into the parlour from the doorway with the light detector
+
+def scout_matches() -> dict:
+    from game import level3
+    return det.evaluate(level3.scene_detections(SCOUT), level3.TRUTH["objects"], level3.SIDE_CONF)[0]
+
+
+def scout_text(m: dict) -> str:
+    labels = [d["label"] for d in m["tp"]]
+    cups = labels.count("cup")
+    return (f"YOLO26n found {labels.count('chair')} chairs and {labels.count('dining table')} table, "
+            f"{'none' if cups == 0 else cups} of the 4 cups")
+
+
+def show_scout() -> None:
+    from game import level3
+    m = scout_matches()
+    c1, c2 = st.columns([1.4, 1])
+    with c1:
+        st.image(level3.rgb(det.draw(level3.load_scene(), m)), width="stretch")
+        ui.caption("EVIDENCE 05-S · FROM THE DOORWAY · YOLO26N")
+    c2.markdown(f"**{scout_text(m)}**, keeping boxes above {level3.SIDE_CONF:.2f}. From across the room the cups "
+                "are only a few dozen pixels wide. That's worth knowing before you choose a detector for the "
+                "inventory.")
+
+
+def scout_scan() -> flow.SideScan:
+    text = scout_text(scout_matches())
+    return flow.SideScan(
+        key="scout", title="Scout the parlour",
+        blurb="The lift doors open onto the parlour. Before you go in, run the light detector from the doorway "
+              "and see what it can pick out.",
+        what="YOLO26n on the parlour (scout)", latency_ms=runtime.profile("detectors", SCOUT)["latency_ms"],
+        reward_xp=20, clue=f"Parlour scout: {text}", run=lambda: True, show=show_scout,
+        intel=("l3_light", f"Doorway scout: {text}."), tip_topic="mAP")
 
 
 def render() -> None:
+    s = st.session_state
+    c = case.get_case(s)
+    items = [f"{article(n)} {ON[n]} {case.ANCHORS[n]['place']}" for n in c.evidence_order]
     ui.scene_header(
-        "CHAPTER 2 · ROOM 217 · 03:41",
+        f"CHAPTER 2 · {c.clue['label'].upper()} · 03:41",
         "Identify the Entity",
-        "Room 217 was unlocked when you got there. Three things look out of place: a padlock on the desk, a pocket "
-        "watch in the drawer, and a teddy bear in the armchair that is older than the hotel's guest book. "
-        "Each one is photographed on its own.",
+        f"{c.clue['label']} was unlocked when you got there. Three things look out of place: {items[0]}, "
+        f"{items[1]} and {items[2]}. Nobody on the staff remembers any of them. Each one is photographed on its own.",
     )
     try:
         runtime.benchmark()
     except ModelMissing as e:
         st.warning(str(e))
         return
-    solved = 2 in st.session_state.completed_levels
-    st.session_state.setdefault("l2_scanned", {})
+    solved = 2 in s.completed_levels
+    s.setdefault("l2_scanned", {})
 
     if not solved and not flow.mode_choice(
-            2, "Each photo shows a single object. You need to know what each one is.", MODE_OPTIONS, "Classify"):
+            2, "Each photo shows a single object. You need to know what each one is.", mode_options(), "Classify"):
         return
 
     model = flow.model_picker(
         2, profiles(), LIMITS, slot="task",
-        note="Accuracy is ImageNet top-1 as published by Ultralytics. Every scan costs the model's energy.")
+        note="Accuracy is ImageNet top-1 as published by Ultralytics. Every scan costs the model's measured latency.")
     if model is None:
         return
     st.divider()
-    scan_objects(model)
+    scan_objects(c, model)
     st.divider()
-    if pick_anchor() or solved:
+    if pick_anchor(c) or solved:
         st.divider()
-        room_scan(model)
+        room_scan(c, model)
 
     if solved:
         st.divider()
-        completion_panel(2, [("Entity", "The Timekeeper"), ("Anchor", "pocket watch")])
+        completion_panel(2, [("Entity", case.ANCHORS[c.anchor]["entity"]), ("Anchor", c.anchor)], par=par())
+        flow.side_scan(2, scout_scan())
         ui.lesson([
             "Classification answers one question: <b>what does this whole image show?</b> It's the cheapest task.",
             "With one object per image, a bigger model mostly buys you higher confidence on the same answer.",
             "The output is a probability for every class the model knows, and they add up to 100%.",
-            "It can only answer with labels from its training set (no 'pocket watch' in ImageNet).",
+            "It can only answer with labels from its training set (ImageNet has no 'pocket watch').",
             "It doesn't say <b>where</b> anything is, or <b>how many</b>. For that you need detection.",
         ], title="FIELD NOTES")
 
