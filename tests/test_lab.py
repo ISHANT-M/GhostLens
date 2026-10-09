@@ -82,19 +82,52 @@ def test_open_lab_sets_the_deep_link():
 
 @needs_models
 @pytest.mark.parametrize("tab", lab_page.TABS)
-def test_each_tab_renders_alone(tab):
+def test_each_bench_renders_alone_with_no_guessing(tab):
     at = open_tab(tab)
     assert not at.exception
     assert at.session_state["lab_seen"] == {tab}
     shown = [m.value for m in at.markdown if "gl-syllabus" in m.value]
     assert shown == [f'<div class="gl-syllabus">Syllabus: {lab_page.SYLLABUS[tab]}</div>']
+    assert any("gl-try" in m.value for m in at.markdown)
+    assert not any(b.label == "Lock in" for b in at.button)
+    assert all(r.index is not None for r in at.radio)          # no unanswered radio waiting for a guess
+    assert not any("gl-lesson" in m.value for m in at.markdown)
+    if tab not in ("Pruning",):                                # pruning shows its notes after the run
+        assert any(e.label == "Bench notes" for e in at.expander)
+
+
+def test_try_line_for_every_bench():
+    assert set(lab_page.TRY) == set(lab_page.TABS)
 
 
 @needs_models
-def test_tab_survives_a_lock_in():
+def test_tab_survives_a_widget_change():
     at = open_tab("Normalization")
-    at.radio(key="lab_pred_init_choice").set_value(lab_page.ex.STD_BINS[2]).run()
-    next(b for b in at.button if b.label == "Lock in").click().run()
-    record = at.session_state["lab_pred_init"]
-    assert record["right"] is True and at.session_state["guide_xp"] == 5
+    at.toggle(key="lab_init_bn").set_value(True).run()
     assert at.session_state["lab_tab"] == "Normalization" and not at.exception
+    at.radio(key="lab_norm_mode").set_value(lab_page.ex.INPUT_MODES[1]).run()
+    assert at.session_state["lab_tab"] == "Normalization" and not at.exception
+
+
+@needs_models
+def test_losses_bench_grows_the_true_mask_live():
+    at = open_tab("Losses")
+    assert at.radio(key="lab_mask").value == lab_page.GROWN
+    assert "1.000" in " ".join(m.value for m in at.markdown)   # the true mask itself: IoU 1
+    at.slider(key="lab_morph").set_value(5).run()
+    text = " ".join(m.value for m in at.markdown)
+    assert not at.exception and "true mask +5 px" in " ".join(str(d.value) for d in at.dataframe)
+    assert ">IoU<" in text
+    at.radio(key="lab_mask").set_value("empty mask").run()
+    assert not at.exception and at.dataframe
+
+
+@needs_models
+def test_pruning_button_runs_the_sweep():
+    at = open_tab("Pruning")
+    assert not at.dataframe
+    at.button(key="lab_prune_go").click().run()
+    assert not at.exception and at.dataframe and at.session_state["lab_pruned"] is True
+    assert at.select_slider(key="lab_prune_view")
+    at.select_slider(key="lab_prune_view").set_value(0.9).run()
+    assert not at.exception and at.session_state["lab_tab"] == "Pruning"

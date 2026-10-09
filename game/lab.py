@@ -13,13 +13,13 @@ from cv import experiments as ex
 from cv import lab
 from cv import segmentation as seg
 from cv.models import ModelMissing, load_yolo
-from game import case, flow, nav, runtime
+from game import case, nav, runtime
 from ui import components as ui
 
 ROOT = seg.ROOT
 IMAGES = {"Padlock": "assets/level2/padlock.jpg", "Teddy bear": "assets/level2/teddy_bear.jpg",
           "Chapter 4 wall": None}
-COLORS = ["#5E7D5A", "#B7862F", "#8A8377", "#9C4A3C", "#22211F", "#5B5750"]
+HEAT = ["#1A1B19", "#5E5A4C"]          # optimizer loss surface: dark is low, light is high (dark theme)
 STARTS = {"bowl": {"Far left": (-4.0, 2.0), "Top right": (4.0, 2.5), "Steep wall": (-1.0, 3.0)},
           "rosenbrock": {"Classic (-1.5, 2)": (-1.5, 2.0), "Bottom left": (-1.8, -1.0), "Near the valley": (0.0, 0.0)}}
 RANGES = {"bowl": ((-5, 5), (-3.5, 3.5)), "rosenbrock": ((-2, 2), (-1.5, 3))}
@@ -37,6 +37,17 @@ SYLLABUS = {
     "Pruning": "module 7 · pruning, quantization, memory and compute",
     "Augmentation": "module 4 · augmentation: Mixup and CutMix",
 }
+TRY = {
+    "Convolution": "switch the kernel to Sobel x, then turn on stride 2 and watch the output size halve.",
+    "Parameters": "double the out channels and see the params double while the MACs follow the output size.",
+    "Activations": "drag the Leaky ReLU slope to 0 and it becomes plain ReLU, derivative and all.",
+    "Architectures": "compare the torch.cat counts, then check the skip ablation IoU for the U-Net.",
+    "Optimizers": "pick Rosenbrock and raise the learning rate until one optimizer's path blows up.",
+    "Losses": "pick the empty mask and look at its pixel accuracy, then grow the true mask by 5 px.",
+    "Normalization": "feed the raw 0-255 input, then turn BatchNorm on in the init chart.",
+    "Pruning": "run the sweep and compare the 90% pruned latency with the 40 ms limit.",
+    "Augmentation": "slide λ from 0 to 1 and see where the classifier's answer jumps.",
+}
 BUDGET_MS = 40              # the chapter 4 latency limit
 PRUNE_AMOUNTS = [0.0, 0.3, 0.5, 0.7, 0.9]
 VAL_WALLS, VAL_SEED = 50, 999
@@ -53,7 +64,17 @@ def open_lab(tab: str, switch: bool = True) -> None:
 
 
 def chart(c: alt.Chart) -> None:
-    st.altair_chart(c.configure_view(stroke=None).configure(background="transparent"), width="stretch")
+    ui.chart(c)
+
+
+def bench_notes(points: list[str]) -> None:
+    """The lesson for a bench, folded away. The Lab is off the clock, so it can wait for the player."""
+    with st.expander("Bench notes"):
+        st.markdown("\n".join(f"- {p}" for p in points), unsafe_allow_html=True)
+
+
+def try_line(tab: str) -> None:
+    st.markdown(f'<div class="gl-try"><span>TRY</span>{TRY[tab]}</div>', unsafe_allow_html=True)
 
 
 def formula(text: str) -> None:
@@ -163,9 +184,9 @@ def unet_maps(seed: int) -> None:
             col.image(to_view(maps[idx]), width="stretch", clamp=True)
             with col:
                 ui.caption(f"map {idx} · {maps.shape[1]}×{maps.shape[2]}")
-    ui.lesson(["A kernel is a small grid of weights slid over the image. The U-Net learns its kernels instead of us picking them.",
-               "Early maps pick up edges and brightness. Deeper layers combine them into shapes like the stain.",
-               "Stride and pooling shrink the map, which cuts compute for every later layer."], title="FIELD NOTES")
+    bench_notes(["A kernel is a small grid of weights slid over the image. The U-Net learns its kernels instead of us picking them.",
+                 "Early maps pick up edges and brightness. Deeper layers combine them into shapes like the stain.",
+                 "Stride and pooling shrink the map, which cuts compute for every later layer."])
 
 
 # parameters
@@ -233,9 +254,12 @@ def params_tab() -> None:
     st.dataframe(df, hide_index=True, width="stretch")
     ui.readouts([("TOTAL PARAMS", f"{total:,}", ""), ("FP32", kb(total * 4), ""),
                  ("INT8", kb(total), "ok"), ("INPUT", "3×128×128", "")])
-    ui.message("On an edge device the weights are stored once, but every layer's output activations also need RAM "
-               "while it runs, and at full resolution those are often bigger than the weights.")
     probe_section()
+    bench_notes(["Conv parameters are K·K·Cin·Cout + Cout. They don't depend on the image size; MACs and activations do.",
+                 "On an edge device the weights are stored once, but every layer's output activations also need RAM "
+                 "while it runs, and at full resolution those are often bigger than the weights.",
+                 "INT8 stores one byte per weight instead of four, so the same network needs a quarter of the memory.",
+                 "Transfer learning keeps the pretrained backbone frozen and trains only a small new head."])
 
 
 # activations
@@ -250,7 +274,7 @@ def activation_frame(slope: float) -> pd.DataFrame:
 
 
 def activation_chart(df: pd.DataFrame, field: str, title: str) -> alt.Chart:
-    scale = alt.Scale(domain=lab.ACTIVATIONS, range=COLORS)
+    scale = alt.Scale(domain=lab.ACTIVATIONS, range=ui.CHART)
     return alt.Chart(df, title=title).mark_line(strokeWidth=2).encode(
         x=alt.X("x:Q"), y=alt.Y(f"{field}:Q", title=field), color=alt.Color("function:N", scale=scale))
 
@@ -263,14 +287,13 @@ def activations_tab() -> None:
         chart(activation_chart(df, "value", "f(x)"))
     with c2:
         chart(activation_chart(df, "derivative", "f'(x) from autograd"))
-    ui.lesson(["Sigmoid and tanh flatten out for large |x|, so their derivative goes near 0. Multiply many of those "
-               "in backprop and the gradient vanishes.",
-               "ReLU has derivative 1 for positive inputs, so gradients pass through. It is just max(0, x), "
-               "one compare per value, which is cheap on edge chips and easy to quantize. Our U-Net uses it.",
-               "SiLU is x·sigmoid(x): smooth, with a small dip below 0. Every YOLO26 conv block in the case uses it "
-               "(see Architectures).",
-               "Leaky ReLU keeps a small slope for negatives so neurons do not get stuck at 0. GELU is smooth but costs more."],
-              title="FIELD NOTES")
+    bench_notes(["Sigmoid and tanh flatten out for large |x|, so their derivative goes near 0. Multiply many of those "
+                 "in backprop and the gradient vanishes.",
+                 "ReLU has derivative 1 for positive inputs, so gradients pass through. It is just max(0, x), "
+                 "one compare per value, which is cheap on edge chips and easy to quantize. Our U-Net uses it.",
+                 "SiLU is x·sigmoid(x): smooth, with a small dip below 0. Every YOLO26 conv block in the case uses it "
+                 "(see Architectures).",
+                 "Leaky ReLU keeps a small slope for negatives so neurons do not get stuck at 0. GELU is smooth but costs more."])
 
 
 # architectures
@@ -299,7 +322,7 @@ def arch_tables() -> tuple[pd.DataFrame, pd.DataFrame]:
 def category_chart(cats: pd.DataFrame) -> alt.Chart:
     return alt.Chart(cats).mark_bar().encode(
         y=alt.Y("model:N", title=None), x=alt.X("params:Q", stack="normalize", title="share of parameters"),
-        color=alt.Color("category:N", scale=alt.Scale(range=COLORS)), tooltip=["model", "category", "params"]
+        color=alt.Color("category:N", scale=alt.Scale(range=ui.CHART)), tooltip=["model", "category", "params"]
     ).properties(height=150)
 
 
@@ -333,15 +356,14 @@ def architectures_tab() -> None:
     st.dataframe(table, width="stretch")
     chart(category_chart(cats))
     depthwise_readout()
-    ui.lesson(["Residual bottlenecks add a block's input to its output (skip connection), so gradients have a short "
-               "path back. YOLO26 uses them inside its C3k2 blocks.",
-               "Depthwise convs filter each channel on its own; a 1×1 conv then mixes channels. YOLO26s uses them "
-               "in the detection head.",
-               "Attention: one C2PSA block at the end of each YOLO26 backbone learns which positions to weight up.",
-               "There is no Inception block in these models. SPPF in YOLO26s is the closest idea: it max-pools the "
-               "same map at growing sizes (5×5 applied 1, 2 and 3 times) and concatenates the results.",
-               "The U-Net has no attention or depthwise convs. Its two torch.cat calls are its skip connections."],
-              title="FIELD NOTES")
+    bench_notes(["Residual bottlenecks add a block's input to its output (skip connection), so gradients have a short "
+                 "path back. YOLO26 uses them inside its C3k2 blocks.",
+                 "Depthwise convs filter each channel on its own; a 1×1 conv then mixes channels. YOLO26s uses them "
+                 "in the detection head.",
+                 "Attention: one C2PSA block at the end of each YOLO26 backbone learns which positions to weight up.",
+                 "There is no Inception block in these models. SPPF in YOLO26s is the closest idea: it max-pools the "
+                 "same map at growing sizes (5×5 applied 1, 2 and 3 times) and concatenates the results.",
+                 "The U-Net has no attention or depthwise convs. Its two torch.cat calls are its skip connections."])
     st.subheader("U-Net skip ablation", anchor=False)
     masks, ious = skip_masks(wall_seed())
     image_row(masks, {k: f"IoU {v:.3f}" for k, v in ious.items()})
@@ -366,11 +388,11 @@ def optimizer_chart(loss_name: str, paths: pd.DataFrame) -> alt.Chart:
     grid = grid.assign(x2=grid.x + dx, y2=grid.y + dy)
     heat = alt.Chart(grid).mark_rect().encode(
         x=alt.X("x:Q", scale=alt.Scale(domain=[x0, x1]), title="x"), x2="x2", y=alt.Y("y:Q", scale=alt.Scale(domain=[y0, y1]), title="y"),
-        y2="y2", color=alt.Color("loss:Q", scale=alt.Scale(range=["#FBF9F4", "#5B5750"]), title="log loss"))
+        y2="y2", color=alt.Color("loss:Q", scale=alt.Scale(range=HEAT), title="log loss"))
     clipped = paths[paths.x.between(x0, x1) & paths.y.between(y0, y1)]
     lines = alt.Chart(clipped).mark_line(point=alt.OverlayMarkDef(size=12), strokeWidth=2).encode(
         x="x:Q", y="y:Q", order="step:Q",
-        stroke=alt.Stroke("optimizer:N", scale=alt.Scale(domain=list(lab.OPTIMIZERS), range=COLORS[:4])))
+        stroke=alt.Stroke("optimizer:N", scale=alt.Scale(domain=list(lab.OPTIMIZERS), range=ui.CHART[:4])))
     return (heat + lines).properties(height=420).resolve_scale(color="independent")
 
 
@@ -393,11 +415,11 @@ def optimizers_tab() -> None:
     paths = run_optimizers(loss_name, lr, steps, STARTS[loss_name][start_name])
     chart(optimizer_chart(loss_name, paths))
     st.dataframe(final_table(loss_name, paths), hide_index=True, width="stretch")
-    ui.lesson(["SGD: step straight down the gradient. Zig-zags across a narrow valley.",
-               "Momentum: keeps a running velocity, so it speeds up along the valley and smooths the zig-zag.",
-               "RMSprop: divides each step by a running size of that coordinate's gradient, so steep and flat directions move evenly.",
-               "Adam: momentum plus RMSprop scaling. The default we used to train the U-Net.",
-               "A path that stops early blew up: the learning rate was too big for that loss."], title="FIELD NOTES")
+    bench_notes(["SGD: step straight down the gradient. Zig-zags across a narrow valley.",
+                 "Momentum: keeps a running velocity, so it speeds up along the valley and smooths the zig-zag.",
+                 "RMSprop: divides each step by a running size of that coordinate's gradient, so steep and flat directions move evenly.",
+                 "Adam: momentum plus RMSprop scaling. The default we used to train the U-Net.",
+                 "A path that stops early blew up: the learning rate was too big for that loss."])
 
 
 # losses and metrics
@@ -410,35 +432,19 @@ def loss_candidates(seed: int) -> tuple[dict, np.ndarray]:
     return {**masks, **ex.baseline_masks(truth)}, truth
 
 
-@st.cache_data(show_spinner=False)
-def loss_table(seed: int) -> pd.DataFrame:
-    masks, truth = loss_candidates(seed)
+GROWN = "true mask, grown or shrunk"
+
+
+def loss_table(masks: dict, truth: np.ndarray) -> pd.DataFrame:
     return pd.DataFrame([{"mask": k, **ex.mask_scores(m, truth)} for k, m in masks.items()])
 
 
-def resolve_empty_accuracy(seed: int):
-    acc = float(loss_table(seed).set_index("mask").loc["empty mask", "pixel accuracy"])
-    return ex.accuracy_bin(acc), (f"Measured {acc:.1%}. Only {1 - acc:.1%} of this wall is stain, so a mask that "
-                                  "says 'no stain anywhere' is right on every other pixel.")
-
-
-def losses_reveal(seed: int) -> None:
-    df = loss_table(seed)
-    st.markdown("Every candidate scored against the true mask of this wall " + ui.tag("measured"),
-                unsafe_allow_html=True)
-    st.dataframe(df.round(3), hide_index=True, width="stretch")
+def loss_chart(df: pd.DataFrame) -> alt.Chart:
     long = df.melt("mask", ["pixel accuracy", "IoU", "Dice"], var_name="metric")
-    chart(alt.Chart(long).mark_bar().encode(
-        x=alt.X("value:Q", scale=alt.Scale(domain=[0, 1])), y=alt.Y("mask:N", sort=list(df["mask"]), title=None),
-        yOffset="metric:N", color=alt.Color("metric:N", scale=alt.Scale(range=COLORS[:3]))).properties(height=260))
-    ui.lesson(["Pixel accuracy counts the clean wall too. When most pixels are wall, an empty mask scores high and "
-               "finds nothing.",
-               "IoU and Dice ignore the true negatives and only look at the stain. Dice = 2·IoU / (1 + IoU), so it "
-               "always reads a little higher.",
-               "BCE (binary cross-entropy) is the loss our U-Net was trained with. It punishes confident wrong pixels "
-               f"hardest. Hard 0/1 masks are clipped to {ex.BCE_EPS:g}–{1 - ex.BCE_EPS:g} so it stays finite.",
-               "Dice loss (1 − Dice) is a common choice when the object is a small part of the image."],
-              title="FIELD NOTES")
+    return alt.Chart(long).mark_bar().encode(
+        x=alt.X("value:Q", scale=alt.Scale(domain=[0, 1]), title=None),
+        y=alt.Y("mask:N", sort=list(df["mask"]), title=None), yOffset="metric:N",
+        color=alt.Color("metric:N", scale=alt.Scale(range=ui.CHART[:3]), title=None)).properties(height=300)
 
 
 def losses_tab() -> None:
@@ -448,10 +454,31 @@ def losses_tab() -> None:
     except ModelMissing as e:
         st.warning(str(e))
         return
-    st.markdown("Five masks for your chapter 4 wall: two from real U-Nets and three made without any model.")
-    image_row({"true mask": truth.astype(np.float32), **{k: (m > 0.5).astype(np.float32) for k, m in masks.items()}})
-    flow.predict("lab_pred_losses", "The empty mask says 'no stain anywhere'. What is its pixel accuracy on this wall?",
-                 ex.ACCURACY_BINS, lambda: resolve_empty_accuracy(seed), lambda: losses_reveal(seed))
+    c1, c2 = st.columns([1.3, 1])
+    pick = c1.radio("Candidate mask", [GROWN, *masks], key="lab_mask")
+    px = c2.slider("Grow/shrink the true mask (px)", -9, 9, 0, 1, key="lab_morph",
+                   help="cv2.dilate for positive values, cv2.erode for negative ones.")
+    every = {f"true mask {px:+d} px": ex.grow_mask(truth, px), **masks}
+    name = f"true mask {px:+d} px" if pick == GROWN else pick
+    chosen = every[name]
+    image_row({"true mask": truth.astype(np.float32), name: (chosen > 0.5).astype(np.float32)})
+    r = ex.mask_scores(chosen, truth)
+    ui.readouts([("PIXEL ACCURACY", f"{r['pixel accuracy']:.1%}", ""), ("IoU", f"{r['IoU']:.3f}", ""),
+                 ("DICE", f"{r['Dice']:.3f}", ""), ("BCE", f"{r['BCE']:.3f}", "")])
+    df = loss_table(every, truth)
+    st.markdown("Every candidate scored against the true mask of this wall " + ui.tag("measured"),
+                unsafe_allow_html=True)
+    st.dataframe(df.round(3), hide_index=True, width="stretch")
+    chart(loss_chart(df))
+    bench_notes(["Pixel accuracy counts the clean wall too. When most pixels are wall, an empty mask scores high and "
+                 "finds nothing.",
+                 "IoU and Dice ignore the true negatives and only look at the stain. Dice = 2·IoU / (1 + IoU), so it "
+                 "always reads a little higher.",
+                 "Growing or shrinking the true mask by a few pixels barely moves pixel accuracy but drops IoU fast, "
+                 "because the stain is a small share of the wall.",
+                 "BCE (binary cross-entropy) is the loss our U-Net was trained with. It punishes confident wrong pixels "
+                 f"hardest. Hard 0/1 masks are clipped to {ex.BCE_EPS:g}–{1 - ex.BCE_EPS:g} so it stays finite.",
+                 "Dice loss (1 − Dice) is a common choice when the object is a small part of the image."])
 
 
 # normalization and initialization
@@ -475,7 +502,7 @@ def bn_chart(stats: dict) -> alt.Chart:
                        "BN running mean": stats["BN running mean"]}).melt("channel", var_name="source")
     return alt.Chart(df, title="enc1 conv output, mean per channel (before BatchNorm)").mark_point(filled=True).encode(
         x="channel:O", y=alt.Y("value:Q", title="mean"),
-        color=alt.Color("source:N", scale=alt.Scale(range=COLORS[:2])), shape="source:N").properties(height=240)
+        color=alt.Color("source:N", scale=alt.Scale(range=ui.CHART[:2])), shape="source:N").properties(height=240)
 
 
 def input_section(seed: int) -> None:
@@ -497,19 +524,13 @@ def init_frame(batchnorm: bool) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def resolve_init():
-    std = ex.init_stds("PyTorch default", False)[-1]
-    return ex.std_bin(std), (f"Measured std after layer 12: {std:.3f}. PyTorch's default conv weights have std "
-                             "1/√(3·fan_in); Kaiming init for ReLU uses √(2/fan_in). With the smaller weights each "
-                             "ReLU layer shrinks the signal. BatchNorm rescales it whatever the init.")
-
-
-def init_reveal() -> None:
+def init_section() -> None:
+    st.subheader("Weight initialization", anchor=False)
     bn = st.toggle("BatchNorm after every conv", key="lab_init_bn")
     df = init_frame(bn)
     chart(alt.Chart(df, title="activation std after each conv + ReLU (log scale)").mark_line(point=True).encode(
         x="layer:O", y=alt.Y("std:Q", scale=alt.Scale(type="log"), title="std"),
-        color=alt.Color("init:N", scale=alt.Scale(domain=ex.INIT_SCHEMES, range=COLORS[:4]))).properties(height=300))
+        color=alt.Color("init:N", scale=alt.Scale(domain=ex.INIT_SCHEMES, range=ui.CHART[:4]))).properties(height=300))
     st.markdown(ui.tag("measured") + " 12 layers, 16 channels, 3×3 kernels, input std 1. Zeros gives exactly 0 "
                 "everywhere (drawn at 1e-6): every neuron computes the same thing and nothing can learn apart.",
                 unsafe_allow_html=True)
@@ -521,9 +542,16 @@ def normalization_tab() -> None:
         input_section(seed)
     except ModelMissing as e:
         st.warning(str(e))
-    st.subheader("Weight initialization", anchor=False)
-    flow.predict("lab_pred_init", "12 conv + ReLU layers with PyTorch's default init and no BatchNorm. The input "
-                 "has std 1. After layer 12 the activations...", ex.STD_BINS, resolve_init, init_reveal)
+    init_section()
+    default = ex.init_stds("PyTorch default", False)[-1]
+    bench_notes(["Normalize the input the same way as in training. BatchNorm keeps the training mean and spread and "
+                 "uses them at inference, so a different scale shifts every layer after it.",
+                 f"Without BatchNorm, PyTorch's default init ends at std {default:.3f} after 12 layers: its weights "
+                 "have std 1/√(3·fan_in), smaller than the √(2/fan_in) Kaiming init uses for ReLU, so each layer "
+                 "shrinks the signal.",
+                 "N(0, 1) weights make the signal explode instead. BatchNorm rescales each layer, whatever the init.",
+                 "All-zero weights give every neuron the same output and the same gradient, so they never learn "
+                 "different things."])
 
 
 # pruning
@@ -538,42 +566,57 @@ def pruning_table(seed: int) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def resolve_pruning(seed: int):
-    df = pruning_table(seed).set_index("model")
-    ms = float(df.loc["Std FP32 pruned 50%", "latency ms"])
-    base = float(df.loc["Std FP32 pruned 0%", "latency ms"])
-    return int(ms >= BUDGET_MS), (f"Measured {ms:.1f} ms at 50% zeros against {base:.1f} ms unpruned. "
-                                  "A dense conv still multiplies every zero.")
+@st.cache_data(show_spinner=False)
+def pruned_masks(seed: int) -> dict[float, np.ndarray]:
+    img, _ = seg.make_scene(seed)
+    model = runtime.unet("standard", False)
+    return {a: (seg.predict(ex.prune_copy(model, a), img) > 0.5).astype(np.float32) for a in PRUNE_AMOUNTS}
 
 
-def pruning_reveal(seed: int) -> None:
+def pruning_chart(df: pd.DataFrame) -> alt.Chart:
+    bars = alt.Chart(df).mark_bar(color=ui.CHART[5]).encode(
+        x=alt.X("latency ms:Q"), y=alt.Y("model:N", sort=None, title=None))
+    rule = alt.Chart(pd.DataFrame({"ms": [BUDGET_MS]})).mark_rule(color=ui.CHART[3], strokeDash=[4, 3]).encode(x="ms:Q")
+    return (bars + rule).properties(height=230)
+
+
+def pruning_results(seed: int) -> None:
     df = pruning_table(seed)
     st.markdown("Median of 5 runs on a 384×384 wall, this machine's CPU " + ui.tag("measured"), unsafe_allow_html=True)
     st.dataframe(df.round(3), hide_index=True, width="stretch")
-    bars = alt.Chart(df).mark_bar(color=COLORS[5]).encode(x=alt.X("latency ms:Q"), y=alt.Y("model:N", sort=None, title=None))
-    rule = alt.Chart(pd.DataFrame({"ms": [BUDGET_MS]})).mark_rule(color=COLORS[3], strokeDash=[4, 3]).encode(x="ms:Q")
-    chart((bars + rule).properties(height=230))
-    ui.lesson(["Unstructured pruning sets the smallest weights to 0, but the tensor keeps its shape. A dense conv "
-               "kernel multiplies the zeros anyway, so latency and the saved file stay the same.",
-               "To get faster you remove whole channels (structured pruning) or use a sparse kernel the hardware "
-               "supports. Then you usually fine-tune to win the accuracy back.",
-               "INT8 changes the arithmetic itself: 8-bit weights, less memory traffic, faster integer kernels.",
-               f"The red line is the chapter 4 limit of {BUDGET_MS} ms " + ui.tag("gameplay")], title="FIELD NOTES")
+    chart(pruning_chart(df))
+    amount = st.select_slider("Show the mask at", PRUNE_AMOUNTS, value=0.5, key="lab_prune_view",
+                              format_func=lambda a: f"{a:.0%} pruned")
+    _, truth = seg.make_scene(seed)
+    mask = pruned_masks(seed)[amount]
+    image_row({"true mask": truth.astype(np.float32), f"{amount:.0%} pruned": mask},
+              {"true mask": "the painted stain", f"{amount:.0%} pruned": f"IoU {seg.mask_iou(mask > 0.5, truth):.3f}"})
 
 
 def pruning_tab() -> None:
     st.markdown("Take the Standard U-Net (FP32), zero out its smallest conv weights across the whole network "
-                "(global L1 unstructured pruning) and measure again. The experiment runs after you lock in a guess.")
+                "(global L1 unstructured pruning) and measure again.")
     seed = wall_seed()
     try:
         runtime.unet("standard", False)
     except ModelMissing as e:
         st.warning(str(e))
         return
+    s = st.session_state
+    if st.button("Run the pruning sweep", key="lab_prune_go", type="primary", disabled=bool(s.get("lab_pruned"))):
+        s["lab_pruned"] = True
+    if not s.get("lab_pruned"):
+        st.caption(f"Prunes {len(PRUNE_AMOUNTS)} copies, times them with two reference models and scores each one "
+                   f"on {VAL_WALLS} walls. Takes a few seconds.")
+        return
     with st.spinner("Pruning and timing seven models..."):
-        flow.predict("lab_pred_pruning", f"Prune 50% of the Standard U-Net's conv weights. Will it run under "
-                     f"{BUDGET_MS} ms on this laptop?", [f"Yes, under {BUDGET_MS} ms", f"No, still {BUDGET_MS} ms or more"],
-                     lambda: resolve_pruning(seed), lambda: pruning_reveal(seed))
+        pruning_results(seed)
+    bench_notes(["Unstructured pruning sets the smallest weights to 0, but the tensor keeps its shape. A dense conv "
+                 "kernel multiplies the zeros anyway, so latency and the saved file stay the same.",
+                 "To get faster you remove whole channels (structured pruning) or use a sparse kernel the hardware "
+                 "supports. Then you usually fine-tune to win the accuracy back.",
+                 "INT8 changes the arithmetic itself: 8-bit weights, less memory traffic, faster integer kernels.",
+                 f"The dashed line is the chapter 4 limit of {BUDGET_MS} ms " + ui.tag("gameplay")])
 
 
 # augmentation
@@ -603,40 +646,28 @@ def mix_sweep(mode: str) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def resolve_mix():
-    name = classify_mix("Mixup", 0.7)[2][0][0]
-    idx = 0 if name in PADLOCK_LABELS else (1 if name == "teddy" else 2)
-    return idx, f"YOLO26n-cls top-1 on the 70/30 blend: {name}."
-
-
-def mix_reveal() -> None:
+def augmentation_tab() -> None:
+    st.markdown("Blend the padlock and the teddy bear from chapter 2 and show the result to the ImageNet classifier "
+                "YOLO26n-cls.")
     c1, c2 = st.columns(2)
     mode = c1.radio("Method", ["Mixup", "CutMix"], horizontal=True, key="lab_mix_mode")
     lam = c2.slider("λ (share of padlock)", 0.0, 1.0, 0.7, 0.1, key="lab_mix_lam")
-    img, share, top, _ = classify_mix(mode, lam)
+    with st.spinner("Classifying blends..."):
+        img, share, top, _ = classify_mix(mode, lam)
+        df = mix_sweep(mode)
     a, b = mix_sources()
     image_row({"padlock": a, "teddy bear": b, mode: img})
     ui.readouts([("LABEL USED IN TRAINING", f"{share:.0%} padlock · {1 - share:.0%} teddy", "")] +
                 [(f"TOP-{i + 1}", f"{name} {p:.0%}", "") for i, (name, p) in enumerate(top)])
-    df = mix_sweep(mode)
     chart(alt.Chart(df, title="padlock probability vs the mixed label").mark_line(point=True).encode(
         x="padlock share:Q", y=alt.Y("value:Q", scale=alt.Scale(domain=[0, 1]), title="padlock"),
-        color=alt.Color("series:N", scale=alt.Scale(range=COLORS[:2]))).properties(height=260))
+        color=alt.Color("series:N", scale=alt.Scale(range=ui.CHART[:2]), title=None)).properties(height=260))
     st.markdown(ui.tag("measured") + " YOLO26n-cls on real blends. Its answer jumps from one class to the other "
                 "instead of following the mixed label.", unsafe_allow_html=True)
-    ui.lesson(["Mixup blends two images and uses the same blend for the labels. CutMix pastes a patch and weights "
-               "the labels by patch area.",
-               "Training on these soft labels teaches a model to be less sure on in-between inputs.",
-               "Like every augmentation, it is used in training only. In practice λ is drawn at random each batch."],
-              title="FIELD NOTES")
-
-
-def augmentation_tab() -> None:
-    st.markdown("Blend the padlock and the teddy bear from chapter 2, 70% padlock and 30% teddy bear, and show it "
-                "to the ImageNet classifier YOLO26n-cls.")
-    with st.spinner("Classifying blends..."):
-        flow.predict("lab_pred_mix", "What does YOLO26n-cls name as its top-1?",
-                     ["padlock (or combination lock)", "teddy bear", "something else"], resolve_mix, mix_reveal)
+    bench_notes(["Mixup blends two images and uses the same blend for the labels. CutMix pastes a patch and weights "
+                 "the labels by patch area.",
+                 "Training on these soft labels teaches a model to be less sure on in-between inputs.",
+                 "Like every augmentation, it is used in training only. In practice λ is drawn at random each batch."])
 
 
 RENDER = {"Convolution": conv_tab, "Parameters": params_tab, "Activations": activations_tab,
@@ -656,8 +687,9 @@ def remember_tab() -> None:
 
 
 def render() -> None:
-    ui.scene_header("GHOSTLENS LAB · HQ WORKBENCH", "The Lab",
-                    "Back at HQ, no battery is used. Try the building blocks behind the models from the case.")
+    ui.scene_header("GHOSTLENS LAB · HQ WORKBENCH", "HQ Workbench",
+                    "Back at HQ, off the clock and off the battery. Each bench takes one building block from the "
+                    "case apart.")
     s = st.session_state
     target = s.pop("lab_open", None)
     if target in TABS:
@@ -670,4 +702,5 @@ def render() -> None:
             mark_seen(name)
             with tab:
                 syllabus(name)
+                try_line(name)
                 RENDER[name]()

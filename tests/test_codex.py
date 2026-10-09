@@ -1,25 +1,10 @@
+from streamlit.testing.v1 import AppTest
+
 from game import codex
 
 
-def test_right_answer_goes_to_guide_xp_once():
-    store = {"xp": 30}
-    qid, _, _, answer, _ = codex.QUIZ[0]
-    codex.check_answer(store, qid, answer)
-    codex.check_answer(store, qid, answer)
-    assert store["guide_xp"] == codex.QUIZ_XP
-    assert store["xp"] == 30
-    assert store["quiz_correct"] == {qid}
-
-
-def test_wrong_answer_gives_nothing():
-    store = {}
-    qid, _, options, answer, _ = codex.QUIZ[0]
-    codex.check_answer(store, qid, (answer + 1) % len(options))
-    assert store.get("guide_xp", 0) == 0 and store["quiz_feedback"][0] == "bad"
-
-
 def test_forget_the_field_guide():
-    store = {"seen_tips": {1}, "quiz_correct": {"q1"}, "guide_xp": 5, "xp": 10}
+    store = {"seen_tips": {1}, "quiz_correct": {"q1"}, "guide_xp": 5, "quiz_q3": 1, "xp": 10}
     codex.forget_guide(store)
     assert store == {"xp": 10}
 
@@ -28,41 +13,24 @@ def test_glossary_has_no_brand_names():
     assert not any("Jetson" in text for _, text in codex.GLOSSARY)
 
 
-def test_chapter_quiz_ids_exist():
-    for ids in codex.CHAPTER_QUIZ.values():
-        assert ids and all(q in codex.QUIZ_BY_ID for q in ids)
+def test_no_quiz_left_in_the_guide():
+    assert not any(hasattr(codex, name) for name in ("QUIZ", "QUIZ_BY_ID", "CHAPTER_QUIZ", "inline_quiz",
+                                                       "check_answer", "quiz_tab"))
 
 
-def test_inline_ids_prefer_unanswered_and_stick():
-    store = {"quiz_correct": {codex.CHAPTER_QUIZ[3][0]}}
-    ids = codex.inline_ids(store, 3, 2)
-    assert ids == codex.CHAPTER_QUIZ[3][1:3]
-    store["quiz_correct"].add(ids[0])
-    assert codex.inline_ids(store, 3, 2) == ids
-
-
-def test_inline_answer_uses_its_own_feedback_and_guide_xp():
-    store = {"xp": 10}
-    qid = codex.CHAPTER_QUIZ[1][0]
-    assert codex.check_answer(store, qid, codex.QUIZ_BY_ID[qid][3], feedback_key="l1_iq_x_feedback")
-    assert store["guide_xp"] == codex.QUIZ_XP and store["xp"] == 10
-    assert store["l1_iq_x_feedback"][0] == "ok" and "quiz_feedback" not in store
-
-
-def test_inline_quiz_renders_and_pays():
-    from streamlit.testing.v1 import AppTest
-    at = AppTest.from_string("from game import codex\ncodex.inline_quiz(2, n=2)").run()
-    assert len(at.radio) == 2
-    qid = at.session_state["l2_iq_ids"][0]
-    at.radio(key=f"l2_iq_{qid}").set_value(codex.QUIZ_BY_ID[qid][3]).run()
-    next(b for b in at.button if b.key == f"l2_iq_{qid}_check").click().run()
-    assert at.session_state["guide_xp"] == codex.QUIZ_XP and not at.exception
-
-
-def test_field_guide_page_renders():
-    from streamlit.testing.v1 import AppTest
+def test_field_guide_has_three_tabs_and_no_quiz():
     at = AppTest.from_string("from game import codex\ncodex.render()").run()
     assert not at.exception
+    assert [t.label for t in at.tabs] == ["Tips found", "Glossary", "Badges"]
+    assert not at.radio and not any(b.label in ("Check", "Skip") for b in at.button)
+
+
+def test_forget_button_clears_the_tips():
+    at = AppTest.from_string("from game import codex\ncodex.render()")
+    at.session_state["seen_tips"] = {0, 1}
+    at.run()
+    at.button(key="forget_guide").click().run()
+    assert "seen_tips" not in at.session_state and not at.exception
 
 
 # loading screen tips

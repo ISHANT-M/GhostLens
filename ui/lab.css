@@ -1,21 +1,35 @@
-/* Lab page: formula line and syllabus line */
+/* Lab page, "HQ Workbench": syllabus line, Try line and formula line (dark theme tokens from styles.css) */
+.gl-syllabus {
+  font-family: var(--font-mono, var(--mono));
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--line);
+  padding: 0.2rem 0 0.35rem;
+  margin: 0.2rem 0 0.6rem;
+}
+.gl-try {
+  font-size: 0.95rem;
+  color: var(--text);
+  border-left: 3px solid var(--brass);
+  padding: 0.1rem 0 0.1rem 0.7rem;
+  margin: 0.2rem 0 0.9rem;
+}
+.gl-try span {
+  font-family: var(--font-mono, var(--mono));
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  color: var(--brass);
+  margin-right: 0.5rem;
+}
 .gl-formula {
-  font-family: var(--mono);
+  font-family: var(--font-mono, var(--mono));
   font-size: 0.9rem;
-  background: var(--card);
-  border: 1px solid var(--rule);
-  border-radius: 4px;
+  background: var(--panel-2, var(--panel));
+  border: 1px solid var(--line);
+  border-radius: var(--r-sm, 3px);
   padding: 0.5rem 0.75rem;
   margin: 0.4rem 0 0.8rem;
-  color: var(--ink);
-}
-.gl-syllabus {
-  font-family: var(--mono);
-  font-size: 0.72rem;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--ink-soft);
-  border-bottom: 1px solid var(--rule);
-  padding: 0.2rem 0 0.35rem;
-  margin: 0.2rem 0 0.8rem;
+  color: var(--text);
 }

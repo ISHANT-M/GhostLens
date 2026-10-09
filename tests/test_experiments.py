@@ -49,9 +49,24 @@ def test_baseline_masks():
     assert masks["filled box"].sum() == truth.sum()  # the stain is a rectangle here
 
 
-@pytest.mark.parametrize("acc,bin_", [(0.3, 0), (0.5, 1), (0.79, 1), (0.8, 2), (0.9, 2), (0.95, 3), (0.99, 3)])
-def test_accuracy_bin(acc, bin_):
-    assert ex.accuracy_bin(acc) == bin_
+def test_grow_mask_grows_and_shrinks():
+    truth = np.zeros((40, 40), np.uint8)
+    truth[10:30, 10:30] = 1
+    assert ex.grow_mask(truth, 0).sum() == truth.sum()
+    assert ex.grow_mask(truth, 3).sum() > truth.sum() > ex.grow_mask(truth, -3).sum()
+    assert ex.grow_mask(truth, -3)[20, 20] == 1 and ex.grow_mask(truth, 3)[8, 20] == 1
+
+
+def test_clean_mask_off_is_unchanged_and_opening_removes_specks():
+    mask = np.zeros((60, 60), bool)
+    mask[10:40, 10:40] = True
+    mask[50, 50] = True                                  # a one-pixel speck
+    assert (seg.clean_mask(mask, 0, 0) == mask).all()
+    opened = seg.clean_mask(mask, 3, 0)
+    assert not opened[50, 50] and opened[25, 25]
+    holed = mask.copy()
+    holed[25, 25] = False                                # a one-pixel gap
+    assert seg.clean_mask(holed, 0, 3)[25, 25]
 
 
 # pruning
@@ -106,19 +121,14 @@ def test_init_zeros_gives_zero():
 
 
 def test_init_normal_explodes_and_default_shrinks():
-    assert ex.std_bin(ex.init_stds("N(0, 1)", False)[-1]) == 0
-    assert ex.std_bin(ex.init_stds("PyTorch default", False)[-1]) == 2
-    assert ex.std_bin(ex.init_stds("Kaiming", False)[-1]) == 1
+    assert ex.init_stds("N(0, 1)", False)[-1] > 10
+    assert ex.init_stds("PyTorch default", False)[-1] < 0.1
+    assert 0.1 <= ex.init_stds("Kaiming", False)[-1] <= 10
 
 
 def test_batchnorm_rescues_any_init():
     for scheme in ["N(0, 1)", "PyTorch default", "Kaiming"]:
-        assert ex.std_bin(ex.init_stds(scheme, True)[-1]) == 1
-
-
-@pytest.mark.parametrize("std,bin_", [(100, 0), (10.5, 0), (10, 1), (1, 1), (0.1, 1), (0.05, 2), (0, 2)])
-def test_std_bin(std, bin_):
-    assert ex.std_bin(std) == bin_
+        assert 0.1 <= ex.init_stds(scheme, True)[-1] <= 10
 
 
 # architectures

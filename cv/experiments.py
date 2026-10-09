@@ -19,8 +19,6 @@ IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
 INPUT_MODES = ["÷255 (as trained)", "raw 0–255", "ImageNet mean/std"]
 INIT_SCHEMES = ["zeros", "N(0, 1)", "PyTorch default", "Kaiming"]
-ACCURACY_BINS = ["under 50%", "50–80%", "80–95%", "over 95%"]
-STD_BINS = ["explodes (std over 10)", "stays between 0.1 and 10", "shrinks (std under 0.1)"]
 BCE_EPS = 1e-3
 
 
@@ -46,8 +44,14 @@ def baseline_masks(truth: np.ndarray) -> dict[str, np.ndarray]:
             "all stain": np.ones(truth.shape, np.float32)}
 
 
-def accuracy_bin(acc: float) -> int:
-    return int(np.searchsorted([0.5, 0.8, 0.95], acc, side="right"))
+def grow_mask(truth: np.ndarray, px: int) -> np.ndarray:
+    """The true mask grown (px > 0) or shrunk (px < 0) by about px pixels on every side."""
+    m = truth.astype(np.uint8)
+    if px == 0:
+        return m.astype(np.float32)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * abs(px) + 1, 2 * abs(px) + 1))
+    out = cv2.dilate(m, kernel) if px > 0 else cv2.erode(m, kernel)
+    return out.astype(np.float32)
 
 
 # pruning
@@ -151,10 +155,6 @@ def init_stds(scheme: str, batchnorm: bool, layers: int = 12, channels: int = 16
         x = F.relu(x)
         stds.append(float(x.std()))
     return stds
-
-
-def std_bin(std: float) -> int:
-    return 0 if std > 10 else (1 if std >= 0.1 else 2)
 
 
 # architectures
