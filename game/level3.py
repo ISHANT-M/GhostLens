@@ -33,6 +33,10 @@ ASKS = {
                     "tolerated, but at least 6 in 10 of your boxes must be real.",
 }
 FLOORS = {"inventory": 0.75, "miss_nothing": 0.6}         # the line drawn on the chart for each brief
+PRED_FROM, PRED_TO = 0.60, 0.20                           # the threshold move in the prediction
+DROP_OPTIONS = ["Precision", "Recall", "Both", "Neither"]
+MATCH_IOUS = [round(0.5 + 0.05 * i, 2) for i in range(10)]  # 0.50 .. 0.95, as in mAP50-95
+RED, GREEN = (60, 74, 156), (90, 125, 94)                 # BGR
 
 
 @st.cache_data
@@ -139,12 +143,13 @@ def warm() -> None:
     scene_detections("yolo26s.pt")
 
 
-WARMUP = [("Measuring detectors", runtime.benchmark), ("Loading the detector", warm)]
+WARMUP = [("Measuring the models", runtime.benchmark), ("Warming up GhostLens", warm)]
 
 
 def profiles() -> list[dict]:
     intel = st.session_state.get("intel", {}).get("l3_light")
-    rows = [{**r, "accuracy": r["published"], "accuracy_tag": "published"} for r in runtime.benchmark()["detectors"]]
+    rows = [{**r, "accuracy": r["published"].replace(" mAP", ""), "accuracy_tag": "published",
+             "metric": "COCO mAP50-95"} for r in runtime.benchmark()["detectors"]]
     for r in rows:
         if r["id"] == LIGHT and intel:
             r["intel"] = intel
@@ -220,6 +225,119 @@ def with_moved(img: np.ndarray, box: list[float]) -> np.ndarray:
 
 def par() -> int:
     return energy_units(runtime.profile("detectors", "yolo26s.pt")["latency_ms"])
+
+
+# prediction: what can drop when the threshold goes down?
+
+def which_drops(before: dict, after: dict) -> set[str]:
+    return {k for k in ("precision", "recall", "f1") if after[k] < before[k] - 1e-9}
+
+
+def drops_answer(dropped: set[str]) -> int:
+    """Index into DROP_OPTIONS. Only precision and recall are asked about."""
+    p, r = "precision" in dropped, "recall" in dropped
+    return 2 if p and r else 0 if p else 1 if r else 3
+
+
+def resolve_drops(dets: list[dict], name: str) -> tuple[int, str]:
+    before = det.evaluate(dets, TRUTH["objects"], PRED_FROM)[1]
+    after = det.evaluate(dets, TRUTH["objects"], PRED_TO)[1]
+    return drops_answer(which_drops(before, after)), (
+        f"{name}: precision {before['precision']:.0%} → {after['precision']:.0%}, recall {before['recall']:.0%} → "
+        f"{after['recall']:.0%}. A lower threshold only adds boxes. Every match you had stays, so recall can't "
+        "fall. The new boxes are less sure, so precision can.")
+
+
+def drops_reveal(dets: list[dict]) -> None:
+    rows = [{"threshold": t, **{k: round(v, 2) for k, v in det.evaluate(dets, TRUTH["objects"], t)[1].items()}}
+            for t in (PRED_FROM, PRED_TO)]
+    st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+
+
+def threshold_prediction(dets: list[dict], model: dict) -> None:
+    s = st.session_state
+    if "l3_pred_drop" not in s and s.get("l3_attempts", 0):
+        return
+    flow.predict("l3_pred_drop", f"Suppose you moved the threshold from {PRED_FROM:.2f} down to {PRED_TO:.2f}. "
+                 "Which of these can drop?", DROP_OPTIONS, resolve=lambda: resolve_drops(dets, model["name"]),
+                 reveal=lambda: drops_reveal(dets), ready=s.get("l3_attempts", 0) > 0)
+
+
+# after a report: why each false alarm didn't count
+
+def alarm_crop(d: dict, nearest: dict | None) -> np.ndarray:
+    img = load_scene().copy()
+    boxes = [d["box"]] + ([nearest["box"]] if nearest else [])
+    x0, y0 = (max(0, int(min(b[i] for b in boxes)) - 40) for i in (0, 1))
+    x1, y1 = (int(max(b[i] for b in boxes)) + 40 for i in (2, 3))
+    if nearest:
+        a, b, c, e = map(int, nearest["box"])
+        cv2.rectangle(img, (a, b), (c, e), GREEN, 2)
+    a, b, c, e = map(int, d["box"])
+    cv2.rectangle(img, (a, b), (c, e), RED, 2)
+    return img[y0:y1, x0:x1]
+
+
+def false_alarm_view(m: dict) -> None:
+    alarms = det.explain_false_alarms(m, TRUTH["objects"])
+    if not alarms:
+        return
+    names = [f"{a['det']['label']} {a['det']['conf']:.2f}" for a in alarms]
+    pick = st.selectbox("Why didn't this box count?", range(len(alarms)), format_func=lambda i: names[i],
+                        key="l3_alarm")
+    a = alarms[pick]
+    nearest = TRUTH["objects"][a["truth"]] if a["truth"] is not None else None
+    c1, c2 = st.columns([1, 1.6])
+    c1.image(rgb(alarm_crop(a["det"], nearest)), width="stretch")
+    near = f" Nearest labelled object: {nearest['label']}, IoU {a['iou']:.2f}." if nearest else ""
+    c2.markdown(f"**{det.REASONS[a['reason']]}**{near}\n\nRed: the false alarm. Green: the labelled object it "
+                "was compared with.")
+
+
+# after solving: how strict is "correct"?
+
+def match_sweep(dets: list[dict], truth: list[dict], threshold: float, ious: list[float]) -> list[dict]:
+    kept = [d for d in dets if d["conf"] >= threshold]
+    return [{"match_iou": v, **det.scores(det.match(kept, truth, v))} for v in ious]
+
+
+def sweep_chart(rows: list[dict], chosen: float) -> alt.Chart:
+    df = pd.DataFrame([{"match_iou": r["match_iou"], "metric": label, "value": r[k]} for r in rows
+                       for k, label in (("precision", "Precision"), ("recall", "Recall"), ("f1", "F1"))])
+    lines = alt.Chart(df).mark_line(point=alt.OverlayMarkDef(size=18)).encode(
+        x=alt.X("match_iou:Q", title="IoU needed to count as correct", scale=alt.Scale(domain=[0.5, 0.95])),
+        y=alt.Y("value:Q", title=None, scale=alt.Scale(domain=[0, 1.05]), axis=alt.Axis(format="%")),
+        color=alt.Color("metric:N", scale=alt.Scale(domain=["Precision", "Recall", "F1"],
+                                                    range=[flow.BAD, flow.OK, flow.INK]),
+                        legend=alt.Legend(orient="top", title=None)))
+    now = alt.Chart(pd.DataFrame({"x": [chosen]})).mark_rule(color=flow.SOFT, strokeDash=[4, 3]).encode(x="x:Q")
+    return (lines + now).properties(height=200).configure_view(stroke=None).configure(background="transparent")
+
+
+def debrief(dets: list[dict], threshold: float) -> None:
+    chosen = st.select_slider("Matching IoU", MATCH_IOUS, value=0.5, key="l3_match_iou",
+                              help="How much a box must overlap a labelled object to count as correct.")
+    rows = match_sweep(dets, TRUTH["objects"], threshold, MATCH_IOUS)
+    st.altair_chart(sweep_chart(rows, chosen), width="stretch")
+    at = next(r for r in rows if r["match_iou"] == chosen)
+    st.caption(f"{ui.tag('measured')} your boxes at threshold {threshold:.2f}, scored against our labels",
+               unsafe_allow_html=True)
+    light = runtime.profile("detectors", LIGHT)
+    ui.lesson([
+        f"At matching IoU {chosen:.2f}, {at['tp']} of your boxes still count (F1 {at['f1']:.2f}). COCO's mAP50-95 "
+        "averages over 0.50 to 0.95, which is why it's always below mAP50.",
+        "The threshold doesn't change the model. Lowering it keeps every match you had, so recall never falls, "
+        "and precision pays for the extra boxes.",
+        f"{light['name']} was cheapest but its best recall here was {light['best_recall']:.0%}: the cups are only a "
+        "few dozen pixels wide. The model to ship is the one that meets the brief.",
+    ], title="DEBRIEF")
+
+
+def label_lines() -> str:
+    names = runtime.yolo("yolo26s.pt").names
+    ids = {v: k for k, v in names.items()}
+    h, w = load_scene().shape[:2]
+    return "\n".join(det.yolo_lines(TRUTH["objects"], w, h, ids))
 
 
 def report_checks(model_id: str) -> dict:
@@ -320,7 +438,7 @@ def render() -> None:
 
     if not solved and not flow.mode_choice(
             3, "Lots of objects in one frame. You need to know what each one is and where it is.",
-            mode_options(), "Detect"):
+            mode_options(), "Detect", needs="what each object is and where it is"):
         return
 
     brief_card(c.brief)
@@ -343,6 +461,7 @@ def render() -> None:
     meetable = can_meet(dets, c.brief)
     reported = s.get("l3_reported") == model["id"]
     s.setdefault("l3_threshold", case.BRIEFS[c.brief]["start"])   # set before the slider exists
+    threshold_prediction(dets, model)
 
     view, ctrl = st.columns([2.2, 1], gap="large")
     with ctrl:
@@ -364,6 +483,8 @@ def render() -> None:
         reported = True
         if case.brief_passes(c.brief, sc):
             finish_level(3, sc["f1"], s.l3_attempts, report_checks(model["id"]), clue="Tea set moved")
+        if (s.get("l3_pred_drop") or {}).get("right", False) is None:
+            st.rerun()      # the prediction above was drawn before this submit; reveal it now
 
     with view:
         if reported or solved:
@@ -381,6 +502,7 @@ def render() -> None:
         if not solved:
             consequence(c.brief, m, sc)
         report_view(dets, threshold, c.brief, sc, meetable, model, solved)
+        false_alarm_view(m)
     else:
         st.info("Pick a threshold and submit your report. You'll find out what you got right afterwards.")
 
@@ -388,20 +510,10 @@ def render() -> None:
         st.divider()
         completion_panel(3, [("Best F1", f"{s.best_scores.get(3, 0):.2f}"),
                              ("Brief", case.BRIEFS[c.brief]["title"]), ("Moved", case.MOVABLE[c.moved])],
-                         par=par())
+                         par=par(), debrief=lambda: debrief(dets, threshold))
         flow.side_scan(3, tray_scan())
-        ui.lesson([
-            "Classification: <b>what?</b> Detection: <b>what, and where?</b> Here the extra cost was worth it.",
-            "The threshold doesn't change the model. It only decides which of its guesses you believe.",
-            "<b>Precision</b>: of everything predicted positive, how much was actually correct?",
-            "<b>Recall</b>: of everything actually positive, how much did we find?",
-            "The brief picks the threshold: 'miss nothing' pushes it down for recall, a full inventory balances "
-            "both with F1.",
-            "The smallest detector was cheapest but missed small objects. The biggest didn't fit. "
-            "The best model is the one that meets the mission, not the extreme on either side.",
-        ], title="FIELD NOTES")
 
-    with st.expander("Learn more: IoU, NMS and mAP"):
+    with st.expander("Learn more: IoU, NMS, mAP and detection labels"):
         st.markdown(
             "**IoU (intersection over union)** measures how well two boxes overlap: the shared area divided by the "
             "total area covered by both. 1.0 is a perfect match, 0 is no overlap.\n\n"
@@ -409,5 +521,9 @@ def render() -> None:
             "duplicates afterwards with non-maximum suppression. YOLO26 is trained to output one box per object, "
             "so it can skip NMS, which makes it simpler to run on small devices.\n\n"
             "**mAP** averages precision over all recall levels, all classes, and IoU thresholds from 0.5 to 0.95. "
-            "It's the single number on the model cards above."
+            "It's the number on the model cards above.\n\n"
+            "**Detection labels.** Our ground truth for this room, written the way a YOLO training set stores it: "
+            "one line per object, the COCO class id, then the box centre x and y, width and height, each as a "
+            "fraction of the image."
         )
+        st.code(label_lines(), language=None)

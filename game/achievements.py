@@ -1,5 +1,6 @@
 """Badges, checked against st.session_state (or a plain dict in tests)."""
 
+import re
 from collections.abc import Mapping
 
 from game import device
@@ -9,6 +10,7 @@ QUIZ_TARGET = 5
 TIPS_TARGET = 15
 CLEAN_FRAME = 0.88       # reference settings give 0.847, careful cheap tuning reaches about 0.896
 SIDE_CLUES = 4
+FORECASTS = 3            # chapter predictions called right
 
 
 def _solved(store: Mapping) -> set:
@@ -44,6 +46,10 @@ def _straight_a(s):
     return all(grades.get(n) == "A" for n in CORRECT_MODES)
 
 
+def _forecasts_right(s) -> int:
+    return sum(1 for k, v in s.items() if re.match(r"^l\d_pred_", str(k)) and isinstance(v, dict) and v.get("right"))
+
+
 def _quantizer(s):
     return 4 in _solved(s) and str(s.get("l4_model") or "").endswith("-int8")
 
@@ -76,6 +82,10 @@ BADGES = [
      "description": f"Answered {QUIZ_TARGET} field guide quiz questions right.",
      "hint": "Try the quiz in the field guide.",
      "check": lambda s: len(s.get("quiz_correct", ())) >= QUIZ_TARGET},
+    {"id": "forecaster", "name": "Forecaster",
+     "description": f"Called {FORECASTS} chapter predictions right before seeing the measurement.",
+     "hint": "Answer the 'Predict first' questions in the chapters.",
+     "check": lambda s: _forecasts_right(s) >= FORECASTS},
     {"id": "fumes", "name": "Running on fumes", "description": "Let the battery hit zero. Oops.",
      "hint": "Not one to aim for.", "check": _fumes},
 ]

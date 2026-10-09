@@ -15,6 +15,14 @@ from game.tips import TIPS, random_tip
 from ui import components as ui
 
 MODES = ["Enhance", "Classify", "Detect", "Segment"]
+# what each mode hands back, for the wrong-mode card
+MODE_OUTPUT = {
+    "Enhance": "a cleaned-up copy of the same frame",
+    "Classify": "one label for the whole image",
+    "Detect": "a box and a label for each object",
+    "Segment": "a label for every pixel",
+    "Retrain": "a new model, after hours of training somewhere else",
+}
 MIN_LOADING_SECONDS = 2.8
 # hex copies of the CSS variables, for Altair
 INK, OK, WARN, BAD, SOFT = "#22211F", "#5E7D5A", "#B7862F", "#9C4A3C", "#5B5750"
@@ -35,18 +43,25 @@ class SideScan:
     tip_topic: str | None = None
 
 
-def loading_screen(chapter: int, title: str, mode: str, work: list[tuple[str, Callable]]) -> None:
+def loading_tip(chapter: int, seen: set) -> tuple[int, str, str]:
+    from game import tips
+    picked = tips.pick_tip(chapter, seen) if hasattr(tips, "pick_tip") else None
+    return picked if picked and len(picked) == 3 else random_tip(seen)
+
+
+def loading_html(chapter: int, title: str) -> str:
+    # no mode here: the player hasn't chosen one yet
+    return (f'<div class="gl-loading"><div class="chapter">CHAPTER {chapter} / {state.LEVEL_COUNT}</div>'
+            f'<div class="gl-loading-title">{title}</div><div class="mode">preparing GhostLens</div></div>')
+
+
+def loading_screen(chapter: int, title: str, work: list[tuple[str, Callable]]) -> None:
     seen = st.session_state.setdefault("seen_tips", set())
-    i, topic, tip = random_tip(seen)
+    i, topic, tip = loading_tip(chapter, seen)
     seen.add(i)
     box = st.empty()
     with box.container(key="loading"):
-        st.markdown(
-            f'<div class="gl-loading"><div class="chapter">CHAPTER {chapter} / {state.LEVEL_COUNT}</div>'
-            f'<div class="gl-loading-title">{title}</div>'
-            f'<div class="mode">GhostLens · preparing {mode} mode</div></div>',
-            unsafe_allow_html=True,
-        )
+        st.markdown(loading_html(chapter, title), unsafe_allow_html=True)
         bar = st.progress(0.0)
         st.markdown(f'<div class="gl-tip"><div class="title">FIELD TIP · {topic.upper()}</div>{tip}</div>',
                     unsafe_allow_html=True)
@@ -70,18 +85,24 @@ def battery_tone(units: int) -> str:
     return "warn" if units >= device.LOW_POWER_BELOW else "bad"
 
 
+def chip_label(n: int, store) -> str:
+    """'CH 2', or 'CH 2 · CLASSIFY' once the player has picked that chapter's mode."""
+    mode = store.get(f"l{n}_mode")
+    return f"CH {n} · {mode.upper()}" if mode else f"CH {n}"
+
+
 def hud_html(chapter: int) -> str:
     s = st.session_state
     chips = []
-    for n, mode in enumerate(MODES, start=1):
+    for n in range(1, state.LEVEL_COUNT + 1):
         cls = "active" if n == chapter else "done" if n in s.completed_levels else \
             "open" if state.is_unlocked(s, n) else "locked"
-        chips.append(f'<span class="gl-chip {cls}">{mode.upper()}</span>')
+        chips.append(f'<span class="gl-chip {cls}">{chip_label(n, s)}</span>')
     low = "LOW POWER · " if device.low_power(s) else ""
     return (f'<div class="gl-hud"><span>GHOSTLENS MK.II · CH {chapter}/{state.LEVEL_COUNT}</span>'
             f'<span class="modes">{"".join(chips)}</span>'
-            f'<span><span class="{battery_tone(s.battery)}">{low}BATTERY {pct(s.battery)}</span> · XP {s.xp}</span>'
-            '</div>')
+            f'<span><span class="{battery_tone(s.battery)}">{low}BATTERY {pct(s.battery)}</span> · '
+            f'CASE XP {s.xp}</span></div>')
 
 
 def battery_meter(units: int) -> str:
@@ -233,8 +254,8 @@ def side_scan(level: int, scan: SideScan) -> None:
 def rules_html() -> str:
     m, g = ui.tag("measured"), ui.tag("gameplay")
     rules = [
-        f"{m} Every run costs its measured latency: 1 ms = 0.1% battery. You start at "
-        f"{pct(device.BATTERY_START)}.",
+        f"{m} Every run's latency is measured on this machine (median of several runs).",
+        f"{g} 1 ms of measured compute costs 0.1% battery. You start at {pct(device.BATTERY_START)}.",
         f"{g} Below {pct(device.LOW_POWER_BELOW)} GhostLens drops to low power. Heavy models switch off and the "
         "lobby charger opens.",
         f"{g} The lobby charger gives +{pct(device.CHARGER_UNITS)} for {device.CHARGER_XP} XP, as often as you need. "
@@ -280,7 +301,7 @@ def battery_timeline_chart() -> alt.Chart | None:
 
 # mode and model choice
 
-def mode_choice(level: int, question: str, options: dict[str, dict], correct: str) -> bool:
+def mode_choice(level: int, question: str, options: dict[str, dict], correct: str, needs: str = "") -> bool:
     # options: {mode: {"blurb", "verdict", "run": () -> (label, latency_ms) or None, "show": callable,
     #                  "tier": "Balanced" by default, "latency_ms": cost known before running (optional)}}
     s = st.session_state
@@ -308,7 +329,7 @@ def mode_choice(level: int, question: str, options: dict[str, dict], correct: st
 
     last = s.get(f"{key}_last")
     if last and last != correct:
-        wrong_mode_result(level, last, options[last])
+        wrong_mode_result(level, last, options[last], needs)
     return False
 
 
@@ -328,16 +349,23 @@ def try_mode(level: int, opt: dict) -> None:
     s[f"{key}_cost"] = (label, ms, run_cost(level, label, ms))
 
 
-def wrong_mode_result(level: int, mode: str, opt: dict) -> None:
+def asked_line(mode: str, needs: str) -> str:
+    """'You asked for X. This question needs Y.'"""
+    asked = f"You asked for {MODE_OUTPUT.get(mode, mode)}."
+    return f"{asked} This question needs {needs}." if needs else asked
+
+
+def wrong_mode_result(level: int, mode: str, opt: dict, needs: str = "") -> None:
     s = st.session_state
     key = f"l{level}_mode"
     if units := s.get(f"{key}_blocked"):
-        ui.message(f"{opt['verdict']} GhostLens didn't run {mode} mode: not enough charge to run it "
-                   f"(would cost {pct(units)}).", "bad")
+        ui.message(f"{asked_line(mode, needs)} {opt['verdict']} GhostLens didn't run {mode} mode: not enough "
+                   f"charge to run it (would cost {pct(units)}).", "bad")
         return
-    st.markdown(f'<div class="gl-kicker" style="margin-top:0.9rem">GhostLens ran {mode} mode</div>',
-                unsafe_allow_html=True)
+    st.markdown(f'<div class="gl-wrongmode"><div class="gl-kicker">GhostLens ran {mode} mode</div>'
+                f'{asked_line(mode, needs)}</div>', unsafe_allow_html=True)
     if opt.get("show"):
+        st.markdown('<div class="gl-kicker">GhostLens returned</div>', unsafe_allow_html=True)
         opt["show"]()
     if cost := s.get(f"{key}_cost"):
         cost_line(*cost)
@@ -378,9 +406,10 @@ def model_card_html(p: dict, badge: str, selected: bool, locked: bool) -> str:
         f'<table class="mono">'
         f'<tr><td>size</td><td>{p["size_mb"]:.2f} MB</td></tr>'
         f'<tr><td>latency</td><td>{p["latency_ms"]:.0f} ms</td></tr>'
-        f'<tr><td>accuracy</td><td>{p["accuracy"]}</td></tr>'
+        f'<tr><td>{p.get("metric", "accuracy")}</td><td>{p["accuracy"]}</td></tr>'
         f'<tr><td>battery/run</td><td>{pct(energy_units(p["latency_ms"]))}</td></tr></table>'
-        f'<div class="tags">{ui.tag("measured")} size, latency &nbsp;{ui.tag(p["accuracy_tag"])} accuracy '
+        f'<div class="tags">{ui.tag("measured")} size, latency &nbsp;{ui.tag(p["accuracy_tag"])} '
+        f'{p.get("metric", "accuracy")} '
         f'&nbsp;{ui.tag("gameplay")} battery</div>{intel}{badge}</div>'
     )
 
@@ -419,11 +448,20 @@ def model_picker(level: int, profiles: list[dict], limits: dict, slot: str, note
     return chosen
 
 
-def mission_report(level: int, checks: dict[str, tuple[bool, str]], grade: str) -> None:
-    rows = "".join(
+def check_rows(checks: dict[str, tuple[bool, str]]) -> str:
+    return "".join(
         f"<tr><td>{name}</td><td class='{'ok' if ok else 'bad'}'>{'✓' if ok else '✗'}</td><td>{detail}</td></tr>"
         for name, (ok, detail) in checks.items()
     )
+
+
+def checklist(title: str, checks: dict[str, tuple[bool, str]]) -> None:
+    st.markdown(f'<div class="gl-checklist"><div class="gl-kicker">{title}</div>'
+                f'<table class="mono">{check_rows(checks)}</table></div>', unsafe_allow_html=True)
+
+
+def mission_report(level: int, checks: dict[str, tuple[bool, str]], grade: str) -> None:
+    rows = check_rows(checks)
     cell = f'<div class="gl-cell">SPARE CELL +{pct(device.A_GRADE_UNITS)}</div>' if grade == "A" else ""
     st.markdown(
         f'<div class="gl-report"><div><div class="grade g{grade}">{grade}</div>{cell}</div>'

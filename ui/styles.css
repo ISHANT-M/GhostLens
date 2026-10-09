@@ -265,3 +265,22 @@ hr { border-color: var(--rule); }
 
 /* predict-then-reveal */
 .gl-predict { border: 1px dashed var(--ink-soft); background: var(--card); padding: 0.7rem 1rem; margin: 0.8rem 0 0.4rem; }
+
+/* wrong-mode card: what you asked for, what the question needs */
+.gl-wrongmode { border: 1px solid var(--rule); border-left: 3px solid var(--bad); background: var(--card); padding: 0.6rem 0.9rem; margin: 0.9rem 0 0.5rem; }
+
+/* purification checklist */
+.gl-checklist { border: 1px solid var(--rule); background: var(--card); padding: 0.6rem 0.9rem; margin: 0.4rem 0 0.8rem; }
+.gl-checklist table { font-size: 0.8rem; }
+.gl-checklist td { padding: 2px 10px 2px 0; vertical-align: top; }
+.gl-checklist td.ok { color: var(--ok); }
+.gl-checklist td.bad { color: var(--bad); }
+
+/* bridge to the next chapter */
+.gl-bridge { border: 1px dashed var(--ink-soft); background: var(--card); padding: 0.7rem 1rem; margin: 0.8rem 0; max-width: 46rem; }
+
+/* case closed: one row per decision */
+.gl-decisions { width: 100%; font-size: 0.84rem; border-collapse: collapse; margin: 0.3rem 0 1rem; }
+.gl-decisions th { font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-soft); text-align: left; font-weight: 400; padding: 4px 8px 4px 0; border-bottom: 1px solid var(--rule); }
+.gl-decisions td { padding: 5px 8px 5px 0; border-bottom: 1px dashed var(--rule); vertical-align: top; }
+.gl-decisions td:nth-child(4) { font-family: var(--mono); font-size: 0.78rem; }

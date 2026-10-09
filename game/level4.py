@@ -1,7 +1,9 @@
 """Chapter 4: The Corrupted Region (segmentation, model size and quantization)."""
 
+import altair as alt
 import cv2
 import numpy as np
+import pandas as pd
 import streamlit as st
 
 from cv import classification as clf
@@ -11,7 +13,7 @@ from cv.edge import energy_units
 from cv.models import ModelMissing
 from game import case, device, flow, runtime
 from game.device import pct
-from game.levels import case_closed, completion_panel, finish_level, int8_note
+from game.levels import case_closed, completion_panel, finish_level, int8_note, int8_ratios
 from game.scoring import efficient
 from ui import components as ui
 
@@ -19,6 +21,8 @@ LIMITS = {"latency_ms": 40, "iou": 0.95}
 SIDE_THRESHOLD = 0.5                  # the second wall is scored at the default threshold, untuned
 BOX_COLOR = (47, 134, 183)            # amber, BGR
 MASK_COLOR = np.array([90, 125, 94])  # green, BGR
+INT8_OPTIONS = ["Drops by more than 0.05", "Drops by 0.01 to 0.05", "Changes by less than 0.01",
+                "Improves by more than 0.01"]
 
 
 @st.cache_data(show_spinner=False)
@@ -102,9 +106,9 @@ def mode_options() -> dict:
                        "You need a pixel-level boundary.",
         },
         "Segment": {
-            "blurb": "A label for every pixel: stain or wall. Most expensive.",
-            "verdict": "Exactly which pixels are corrupted is a segmentation question. It's the most expensive "
-                       "task, so now the model has to fit the device.",
+            "blurb": "A label for every pixel: stain or wall.",
+            "verdict": "Exactly which pixels are corrupted is a segmentation question. For the same network size "
+                       "it's the costliest task, so now the model has to fit the device.",
         },
     }
 
@@ -114,16 +118,57 @@ def warm() -> None:
     runtime.unet("standard", False)
 
 
-WARMUP = [("Reading the parlour wall", wall), ("Measuring segmentation models", runtime.benchmark),
-          ("Loading U-Net", warm)]
+WARMUP = [("Reading camera 05", wall), ("Measuring the models", runtime.benchmark), ("Warming up GhostLens", warm)]
 
 
 def profiles(int8: bool) -> list[dict]:
     precision = "INT8" if int8 else "FP32"
     tiers = {"lite": "Light", "standard": "Balanced", "pro": "Heavy"}
     return [{**r, "tier": tiers[r["variant"]], "name": f"{r['name']} {precision}",
-             "accuracy": f"{r['iou']:.3f} IoU", "accuracy_tag": "measured"}
+             "accuracy": f"{r['iou']:.3f}", "accuracy_tag": "measured", "metric": "IoU, 150 walls"}
             for r in runtime.benchmark()["unets"] if r["precision"] == precision]
+
+
+# prediction: what does INT8 do to the mask?
+
+def int8_bin(delta: float) -> int:
+    """Index into INT8_OPTIONS for an IoU change (INT8 minus FP32)."""
+    if delta < -0.05:
+        return 0
+    if delta <= -0.01:
+        return 1
+    return 2 if delta <= 0.01 else 3
+
+
+def resolve_int8() -> tuple[int, str]:
+    fp, q = runtime.profile("unets", "standard-fp32"), runtime.profile("unets", "standard-int8")
+    smaller, faster, delta = int8_ratios(runtime.benchmark())
+    return int8_bin(delta), (
+        f"U-Net Standard went from {fp['iou']:.3f} to {q['iou']:.3f} IoU on 150 test walls ({delta:+.3f}), and got "
+        f"{smaller:.1f}× smaller and {faster:.1f}× faster. Eight bits are plenty to say stain or wall.")
+
+
+def int8_reveal() -> None:
+    fp, q = runtime.profile("unets", "standard-fp32"), runtime.profile("unets", "standard-int8")
+    ui.readouts([("Size", f"{fp['size_mb']:.2f} → {q['size_mb']:.2f} MB", "ok"),
+                 ("Latency", f"{fp['latency_ms']:.0f} → {q['latency_ms']:.0f} ms", "ok"),
+                 ("IoU, 150 walls", f"{fp['iou']:.3f} → {q['iou']:.3f}", "")])
+
+
+def int8_prediction() -> None:
+    s = st.session_state
+    tried = any(str(m).endswith("-int8") for m in s.get("l4_ran", []))
+    if s.get("l4_int8") or tried:
+        s.l4_toggled = True
+    if "l4_pred_int8" not in s and s.get("l4_toggled"):
+        return
+    flow.predict("l4_pred_int8", "Before you flip the switch: quantize U-Net Standard to INT8. What happens to its "
+                 "mask IoU on the 150 test walls?", INT8_OPTIONS, resolve=resolve_int8, reveal=int8_reveal,
+                 ready=bool(s.get("l4_toggled")))
+
+
+def pixel_accuracy(mask: np.ndarray, truth: np.ndarray) -> float:
+    return float((mask.astype(bool) == truth.astype(bool)).mean())
 
 
 def par() -> int:
@@ -145,21 +190,24 @@ def report_checks(profile: dict) -> dict:
     }
 
 
-def purify_problems(model: dict, iou: float, threshold: float) -> list[str]:
-    """Everything that stops the purification, one sentence each. Empty means it can go ahead."""
-    problems = []
-    if model["iou"] < LIMITS["iou"]:
-        problems.append(f"{model['name']} only reaches {model['iou']:.3f} IoU on average over 150 test walls. Its "
-                        "masks leak onto healthy wall and miss thin tendrils, so it can't be trusted on the next "
-                        "wall either.")
-    if iou < LIMITS["iou"]:
-        hint = "" if problems else " Try a mask threshold nearer 0.5."
-        problems.append(f"On this wall the mask at threshold {threshold:.2f} reaches {iou:.3f} IoU, below "
-                        f"{LIMITS['iou']}. The purification would scrape the wrong pixels.{hint}")
-    if model["latency_ms"] > LIMITS["latency_ms"]:
-        problems.append(f"At {model['latency_ms']:.0f} ms per frame it can't keep up with the stain while it "
-                        "spreads. By the time the mask is ready, it's out of date.")
-    return problems
+def purify_checks(model: dict, iou: float, threshold: float) -> dict[str, tuple[bool, str]]:
+    """Every limit the purification needs, with a measured detail for each."""
+    s = st.session_state
+    model_ok, wall_ok = model["iou"] >= LIMITS["iou"], iou >= LIMITS["iou"]
+    fast = model["latency_ms"] <= LIMITS["latency_ms"]
+    used = device.memory_used(s)
+    hint = " Try a mask threshold nearer 0.5." if model_ok and not wall_ok else ""
+    return {
+        f"Model IoU ≥ {LIMITS['iou']} (150 walls)": (model_ok, f"{model['iou']:.3f}" + (
+            "" if model_ok else ". Its masks leak onto healthy wall and miss thin tendrils, so it can't be trusted "
+                                "on the next wall either.")),
+        f"This wall IoU ≥ {LIMITS['iou']}": (wall_ok, f"On this wall the mask at threshold {threshold:.2f} "
+                                             f"reaches {iou:.3f} IoU.{hint}"),
+        f"Latency ≤ {LIMITS['latency_ms']} ms": (fast, f"{model['latency_ms']:.0f} ms per frame" + (
+            "" if fast else ". By the time the mask is ready, the stain has moved on.")),
+        "Fits in model memory": (used <= device.MEMORY_MB, f"{model['size_mb']:.2f} MB, {used:.1f} / "
+                                                          f"{device.MEMORY_MB:.0f} MB in use"),
+    }
 
 
 # side scan: the deployed model on a wall it has never seen, threshold untouched
@@ -207,31 +255,84 @@ def second_wall_scan() -> flow.SideScan | None:
 def purify(model: dict, iou: float, threshold: float) -> None:
     s = st.session_state
     s.l4_purify_tries = s.get("l4_purify_tries", 0) + 1
-    problems = purify_problems(model, iou, threshold)
-    if problems:
-        ui.message("<b>Purification failed.</b> " + " ".join(problems)
-                   + " Try a different model, or quantize this one.", "bad")
+    checks = purify_checks(model, iou, threshold)
+    if not all(ok for ok, _ in checks.values()):
+        ui.message("<b>Purification failed.</b> Try a different model, or quantize this one.", "bad")
+        flow.checklist("Purification checks", checks)
         return
     s.l4_deployed = {"id": model["id"], "name": model["name"], "variant": model["variant"],
                      "int8": model["precision"] == "INT8", "iou": iou}
     finish_level(4, iou, s.l4_purify_tries, report_checks(model), clue="Corruption purified")
 
 
+# debrief: every model against the limits
+
+def frontier_rows(bench: dict) -> list[dict]:
+    return [{"name": f"{r['name']} {r['precision']}", "variant": r["variant"], "precision": r["precision"],
+             "latency_ms": r["latency_ms"], "iou": r["iou"], "size_mb": r["size_mb"],
+             "meets": r["latency_ms"] <= LIMITS["latency_ms"] and r["iou"] >= LIMITS["iou"]}
+            for r in bench["unets"]]
+
+
+def frontier_chart(rows: list[dict]) -> alt.Chart:
+    df = pd.DataFrame(rows)
+    lo = min(df.iou.min(), LIMITS["iou"]) - 0.01
+    box = alt.Chart(pd.DataFrame({"x": [0], "x2": [LIMITS["latency_ms"]], "y": [LIMITS["iou"]],
+                                  "y2": [df.iou.max() + 0.005]})).mark_rect(color=flow.OK, opacity=0.12).encode(
+        x="x:Q", x2="x2:Q", y="y:Q", y2="y2:Q")
+    x = alt.X("latency_ms:Q", title="latency, ms (measured)", scale=alt.Scale(domainMin=0))
+    y = alt.Y("iou:Q", title="mask IoU, 150 walls", scale=alt.Scale(domain=[lo, df.iou.max() + 0.005]))
+    arrows = alt.Chart(df).mark_line(color=flow.SOFT, strokeDash=[4, 3]).encode(x=x, y=y, detail="variant:N")
+    colors = alt.Scale(domain=["FP32", "INT8"], range=[flow.SOFT, flow.INK])
+    points = alt.Chart(df).mark_point(filled=True, size=80).encode(
+        x=x, y=y, color=alt.Color("precision:N", scale=colors, legend=alt.Legend(orient="top", title=None)),
+        tooltip=["name:N", "latency_ms:Q", "iou:Q", "size_mb:Q"])
+    labels = alt.Chart(df).mark_text(align="left", dx=7, dy=-6, fontSize=11, color=flow.INK).encode(
+        x=x, y=y, text="name:N")
+    chart = (box + arrows + points + labels).properties(height=260, title="INT8 moves left, not down")
+    return chart.configure_view(stroke=None).configure(background="transparent")
+
+
+@st.cache_data(show_spinner=False)
+def wall_table(seed: int) -> pd.DataFrame:
+    truth = scene(seed)[1]
+    rows = [{"model": f"{r['name']} {r['precision']}", "IoU on this wall": round(seg.mask_iou(
+        wall_probs(r["variant"], r["precision"] == "INT8", seed) > 0.5, truth), 3), "IoU, 150 walls": r["iou"],
+        "latency ms": r["latency_ms"]} for r in runtime.benchmark()["unets"]]
+    return pd.DataFrame(rows)
+
+
+def same_network_line() -> str:
+    cls, det_, segm = (runtime.profile(g, i)["latency_ms"] for g, i in
+                       (("classifiers", "yolo26s-cls.pt"), ("detectors", "yolo26s.pt"), ("segmenters", "yolo26s-seg.pt")))
+    std = runtime.profile("unets", "standard-fp32")
+    return (f"Same network size, three tasks (YOLO26s): {cls:.1f} ms to classify, {det_:.1f} ms to detect, "
+            f"{segm:.1f} ms to segment. The U-Net is cheap only because it is tiny ({std['params_k']:.0f}k parameters).")
+
+
+def debrief() -> None:
+    rows = frontier_rows(runtime.benchmark())
+    st.altair_chart(frontier_chart(rows), width="stretch")
+    st.caption(f"{ui.tag('measured')} latency and IoU from setup_models.py · shaded: ≤ {LIMITS['latency_ms']} ms "
+               f"and IoU ≥ {LIMITS['iou']}", unsafe_allow_html=True)
+    with st.expander("Every model on this wall"):
+        st.dataframe(wall_table(case.get_case(st.session_state).wall_seed), hide_index=True, width="stretch")
+    inside = ", ".join(r["name"] for r in rows if r["meets"]) or "none"
+    ui.lesson([int8_note(), same_network_line(),
+               f"Inside the box: {inside}. On a device, the best model is the one that meets every limit, "
+               "not the most accurate one."], title="DEBRIEF")
+    from game import lab
+    if hasattr(lab, "open_lab") and st.button("Lab · Pruning: does cutting weights do the same?", type="tertiary"):
+        lab.open_lab("Pruning")
+
+
 def solved_view(model: dict, iou: float) -> None:
-    lite, pro = runtime.profile("unets", "lite-fp32"), runtime.profile("unets", "pro-fp32")
     st.divider()
-    completion_panel(4, [("Model deployed", model["name"]), ("Mask IoU", f"{iou:.3f}")], par=par())
+    completion_panel(4, [("Model deployed", model["name"]), ("Mask IoU", f"{iou:.3f}")], par=par(),
+                     debrief=debrief)
     scan = second_wall_scan()
     if scan:
         flow.side_scan(4, scan)
-    ui.lesson([
-        "Segmentation answers <b>exactly which pixels?</b> A box around an irregular shape is mostly background.",
-        "It's the most expensive of the three tasks: a prediction for every pixel.",
-        f"The light model was fast ({lite['latency_ms']:.0f} ms) but its masks leaked ({lite['iou']:.3f} IoU). "
-        f"The heavy one was accurate ({pro['iou']:.3f}) but took {pro['latency_ms']:.0f} ms a frame.",
-        int8_note(),
-        "On a device, the best model is the one that meets every limit, not the most accurate one.",
-    ], title="FIELD NOTES")
     st.divider()
     case_closed()
 
@@ -256,7 +357,7 @@ def render() -> None:
 
     if not solved and not flow.mode_choice(
             4, "You need the exact shape of the stain, so only the corrupted pixels get purified.",
-            mode_options(), "Segment"):
+            mode_options(), "Segment", needs="the exact pixels of the stain"):
         st.image(rgb(img), width=380)
         ui.caption(f"EVIDENCE 05-W · WALL #{seed}")
         return
@@ -265,13 +366,14 @@ def render() -> None:
                 f'<span>mask IoU ≥ {LIMITS["iou"]}</span><span>≤ {LIMITS["latency_ms"]} ms per frame</span></div>',
                 unsafe_allow_html=True)
     s.setdefault("l4_int8", str(s.get("l4_model", "")).endswith("-int8"))   # match the loaded model on a revisit
+    int8_prediction()
     int8 = st.toggle("Quantize to INT8", key="l4_int8",
                      help="Post-training quantization. The numbers on the cards are measured for both versions.")
     st.caption("Stores weights and activations as 8-bit integers instead of 32-bit floats: smaller and faster.")
     model = flow.model_picker(
         4, profiles(int8), LIMITS, slot="task",
-        note="Accuracy is mask IoU measured on 150 generated walls the model never saw. The watchdog detector from "
-             "chapter 3 is still loaded and using memory.")
+        note="Mask IoU measured on 150 generated walls the model never saw (same generator: in-domain). The "
+             "watchdog detector from chapter 3 is still loaded and using memory.")
     if model is None:
         return
 
@@ -301,11 +403,14 @@ def render() -> None:
     ui.readouts([
         ("Stain area", f"{mask.mean():.1%}", ""),
         ("Healthy wall inside box", f"{seg.clean_share_of_box(mask):.0%}", "bad"),
+        ("Pixel accuracy", f"{pixel_accuracy(mask, truth):.1%}", ""),
         ("Mask IoU (this wall)", f"{iou:.3f}", "ok" if iou >= LIMITS["iou"] else "warn"),
         ("Model IoU (150 walls)", f"{model['iou']:.3f}", "ok" if model["iou"] >= LIMITS["iou"] else "bad"),
     ])
     st.caption(f"{ui.tag('measured')} We painted the stain onto the wall ourselves, so the true mask is known exactly. "
-               "Purification needs both IoU readouts at 0.95 or more.", unsafe_allow_html=True)
+               f"Most pixels are wall: an empty mask would already score {1 - truth.mean():.1%} pixel accuracy, so "
+               "accuracy flatters a mask. Purification needs both IoU readouts at 0.95 or more.",
+               unsafe_allow_html=True)
 
     if solved:
         solved_view(model, iou)

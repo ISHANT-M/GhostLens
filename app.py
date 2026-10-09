@@ -64,7 +64,7 @@ def level_page(n: int):
         loaded = st.session_state.setdefault("loaded_chapters", set())
         if n not in loaded:
             info = levels.LEVELS[n]
-            flow.loading_screen(n, info["title"], info["mode"], levels.warmup(n))
+            flow.loading_screen(n, info["title"], levels.warmup(n))
             loaded.add(n)
         st.session_state.current_level = n
         hud.markdown(flow.hud_html(n), unsafe_allow_html=True)
@@ -116,7 +116,7 @@ s = st.session_state
 header.markdown(
     f'<div class="gl-casefile"><b>GHOSTLENS</b> · {case.case_label(s)}<br>'
     f"SOLVED {len(s.completed_levels)}/{state.LEVEL_COUNT} · CLUES {len(s.clues_found)} "
-    f"+ SIDE {len(s.side_clues)}/4<br>XP {s.xp} · GUIDE XP {s.get('guide_xp', 0)}</div>",
+    f"+ SIDE {len(s.side_clues)}/4<br>CASE XP {s.xp} · GUIDE XP {s.get('guide_xp', 0)}</div>",
     unsafe_allow_html=True,
 )
 with panel.container():

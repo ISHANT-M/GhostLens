@@ -1,17 +1,18 @@
-.gl-codex-progress { font-family: ui-monospace, Menlo, monospace; font-size: 0.8rem; color: #5B5750; margin: 0.2rem 0 0.8rem; }
-.gl-codex-topic { font-family: ui-monospace, Menlo, monospace; font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: #5B5750; margin: 1rem 0 0.3rem; }
-.gl-codex-tip { background: #FBF9F4; border: 1px solid #D9D3C7; border-left: 3px solid #5E7D5A; padding: 0.5rem 0.7rem; margin: 0.3rem 0; color: #22211F; font-size: 0.92rem; }
-.gl-codex-tip.locked { border-left-color: #D9D3C7; color: #5B5750; font-style: italic; }
-.gl-codex-term { padding: 0.45rem 0; border-bottom: 1px solid #D9D3C7; color: #22211F; font-size: 0.92rem; }
-.gl-codex-term b { color: #22211F; }
+/* Field guide page */
+.gl-codex-progress { font-family: var(--mono); font-size: 0.8rem; color: var(--ink-soft); margin: 0.2rem 0 0.8rem; }
+.gl-codex-topic { font-family: var(--mono); font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-soft); margin: 1rem 0 0.3rem; }
+.gl-codex-tip { background: var(--card); border: 1px solid var(--rule); border-left: 3px solid var(--ok); padding: 0.5rem 0.7rem; margin: 0.3rem 0; color: var(--ink); font-size: 0.92rem; }
+.gl-codex-tip.locked { border-left-color: var(--rule); color: var(--ink-soft); font-style: italic; }
+.gl-codex-term { padding: 0.45rem 0; border-bottom: 1px solid var(--rule); color: var(--ink); font-size: 0.92rem; }
+.gl-codex-term b { color: var(--ink); }
 .gl-badge-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 0.6rem; margin: 0.5rem 0; }
-.gl-badge-card { background: #FBF9F4; border: 1px solid #D9D3C7; border-top: 3px solid #5E7D5A; padding: 0.6rem 0.75rem; color: #22211F; }
+.gl-badge-card { background: var(--card); border: 1px solid var(--rule); border-top: 3px solid var(--ok); padding: 0.6rem 0.75rem; color: var(--ink); }
 .gl-badge-card .name { font-weight: 600; }
-.gl-badge-card .desc { font-size: 0.85rem; color: #5B5750; margin-top: 0.2rem; }
-.gl-badge-card .state { font-family: ui-monospace, Menlo, monospace; font-size: 0.68rem; letter-spacing: 0.08em; color: #5E7D5A; }
-.gl-badge-card.anti { border-top-color: #9C4A3C; }
-.gl-badge-card.anti .state { color: #9C4A3C; }
-.gl-badge-card.locked { opacity: 0.55; border-top-color: #D9D3C7; }
-.gl-badge-card.locked .state { color: #B7862F; }
+.gl-badge-card .desc { font-size: 0.85rem; color: var(--ink-soft); margin-top: 0.2rem; }
+.gl-badge-card .state { font-family: var(--mono); font-size: 0.68rem; letter-spacing: 0.08em; color: var(--ok); }
+.gl-badge-card.anti { border-top-color: var(--bad); }
+.gl-badge-card.anti .state { color: var(--bad); }
+.gl-badge-card.locked { opacity: 0.55; border-top-color: var(--rule); }
+.gl-badge-card.locked .state { color: var(--warn); }
 .gl-badge-row { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.6rem 0; }
-.gl-badge-chip { font-family: ui-monospace, Menlo, monospace; font-size: 0.72rem; border: 1px solid #5E7D5A; color: #5E7D5A; background: #FBF9F4; padding: 0.15rem 0.5rem; }
+.gl-badge-chip { font-family: var(--mono); font-size: 0.72rem; border: 1px solid var(--ok); color: var(--ok); background: var(--card); padding: 0.15rem 0.5rem; }

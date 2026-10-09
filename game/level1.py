@@ -21,6 +21,9 @@ ASSETS = Path(__file__).resolve().parent.parent / "assets" / "level1"
 CAM03 = (217, "CAM 03  2026-10-07  02:17:44")
 CAM04 = (404, "CAM 04  2026-10-07  02:19:12")
 COSTLY = 50     # 5% of a full pack: the cost readout turns amber
+CLIP_LIMIT = 0.01   # share of pixels you may push to pure black or white
+# the prediction: one tool on its own, at the strength a player would try first
+SINGLE_TOOLS = {"Brightness +100": {"brightness": 100}, "Contrast ×4": {"contrast": 4.0}, "Gamma 2.4": {"gamma": 2.4}}
 
 DEFAULTS = {
     "l1_gamma": 1.0, "l1_brightness": 0, "l1_contrast": 1.0, "l1_equalizer": "None",
@@ -71,6 +74,26 @@ def reference_units(dark: np.ndarray) -> int:
     """Par for the chapter: one pass with the reference settings, timed live."""
     _, timings = enh.run_pipeline(dark, enh.Settings(**case.REFERENCE))
     return energy_units(sum(ms for _, ms in timings))
+
+
+def clip_tone(new_clip: float) -> str:
+    if new_clip > 3 * CLIP_LIMIT:
+        return "bad"
+    return "warn" if new_clip > CLIP_LIMIT else ""
+
+
+def best_tools(qualities: dict[str, float]) -> set[int]:
+    """Indices of the tools with the highest measured quality (ties all count)."""
+    top = max(qualities.values())
+    return {i for i, q in enumerate(qualities.values()) if abs(q - top) < 1e-9}
+
+
+@st.cache_data(show_spinner=False)
+def single_tool_quality(clue_id: str) -> dict[str, float]:
+    clue = next(c for c in case.CLUES if c["id"] == clue_id)
+    reference, dark = clue_frames(clue)
+    return {name: measure(enh.run_pipeline(dark, enh.Settings(**kw))[0], dark, reference, clue["clue_box"])[2]
+            for name, kw in SINGLE_TOOLS.items()}
 
 
 def tone(v: float, good: float, ok: float) -> str:
@@ -139,15 +162,22 @@ def histogram_chart(before: np.ndarray, after: np.ndarray) -> alt.Chart:
     return (zones + areas).properties(height=210).configure_view(stroke=None).configure(background="transparent")
 
 
+def clip_message(new_clip: float) -> None:
+    ui.message(f"<b>{new_clip:.1%} of the frame is now pure black or pure white</b>, over the {CLIP_LIMIT:.1%} "
+               "limit. Those pixels all have the same value, so whatever detail they had is gone for good. "
+               "Ease off the contrast or brightness.", clip_tone(new_clip))
+
+
 def feedback(s: enh.Settings, legib: float, new_clip: float, quality: float, units: int, box: list[float]) -> None:
-    if new_clip > 0.03:
-        ui.message(f"<b>{new_clip:.0%} of the frame is now pure black or pure white.</b> Those pixels all have the same "
-                   "value, so whatever detail they had is gone for good. Ease off the contrast or brightness.", "bad")
+    if clip_tone(new_clip) == "bad":
+        clip_message(new_clip)
     elif s.denoise_method == "Non-local means":
         ui.message(f"<b>Non-local means costs about {pct(units)} of battery per pass.</b> It compares patches across "
                    "the whole frame, so it is hundreds of times slower than a lookup table. Gamma, contrast and CLAHE "
                    f"cost about {pct(1)} and are already enough to read this plate. Expensive isn't automatically "
                    "better.", "warn")
+    elif new_clip > CLIP_LIMIT:
+        clip_message(new_clip)
     elif s.denoise_method == "Gaussian blur" and s.denoise_strength >= 3:
         ui.message("The blur is cleaning up the grain, but it's smearing the digits too. Noise and fine detail are "
                    "both small, fast changes, and a blur can't tell them apart.", "warn")
@@ -186,6 +216,8 @@ def augmentation_panel(reference: np.ndarray) -> None:
     cols = st.columns(6)
     for col in cols:
         img, applied = enh.random_augment(small, rng)
+        if "flip" in applied:
+            applied = [*applied, "digits mirrored: not label-safe"]
         with col:
             st.image(rgb(img), width="stretch")
             ui.caption(" · ".join(applied))
@@ -240,7 +272,7 @@ def report_checks(pipeline_ms: float, new_clip: float, par: int) -> dict:
     return {
         "Cheapest tool first": (misses == 0, "enhanced before running any model" if misses == 0
                                 else f"tried {', '.join(m for m in st.session_state.l1_tried if m != 'Enhance')} first"),
-        "No clipped pixels": (new_clip <= 0.01, f"{new_clip:.1%} pushed to pure black/white"),
+        f"Clipping under {CLIP_LIMIT:.0%}": (new_clip <= CLIP_LIMIT, f"{new_clip:.1%} pushed to pure black/white"),
         "Fast enough for live video": (pipeline_ms <= 1000 / 30, "your pipeline fits one frame at 30 fps"
                                        if pipeline_ms <= 1000 / 30 else "your pipeline is too slow for 30 fps"),
         "Battery": (efficient(used, par), f"{pct(used)} used, {pct(par)} would have done it"),
@@ -310,79 +342,95 @@ def submit_form(clue: dict, pipeline_ms: float, quality: float, new_clip: float,
         ui.message(f"Right number, but at {quality:.0%} evidence quality nobody would accept this frame. "
                    f"Get it to {case.PASS_QUALITY:.0%} and submit again.", "warn")
     else:
+        s.l1_final = {"settings": s.l1_lab, "quality": quality, "clip": new_clip, "ms": pipeline_ms}
         finish_level(1, quality, s.l1_attempts, report_checks(pipeline_ms, new_clip, reference_units(dark)),
                      clue=clue["label"])
 
 
-def render() -> None:
+TOOL_WHY = {
+    "Gamma 2.4": "Gamma lifts dark tones far more than bright ones, and the whole plate is dark tones.",
+    "Contrast ×4": "Contrast stretches the gap between the digits and the plate, but they start almost equal.",
+    "Brightness +100": "Brightness adds the same to every pixel, so the gap between digits and plate stays the same.",
+}
+
+
+def resolve_tool(clue: dict) -> tuple[set[int], str]:
+    q = single_tool_quality(clue["id"])
+    best = best_tools(q)
+    winner = list(q)[min(best)]
+    scores = ", ".join(f"{name} {v:.2f}" for name, v in q.items())
+    return best, f"Measured evidence quality: {scores}. {TOOL_WHY[winner]}"
+
+
+def tool_reveal(clue: dict) -> None:
+    q = single_tool_quality(clue["id"])
+    ui.readouts([(name, f"{v:.0%}", "ok" if i in best_tools(q) else "") for i, (name, v) in enumerate(q.items())])
+
+
+def lab_touched() -> bool:
+    """True from the first time any lab control leaves its default."""
     s = st.session_state
-    c = case.get_case(s)
-    clue = c.clue
-    ui.scene_header(
-        "CHAPTER 1 · CAM 03 · 2026-10-07 02:17:44",
-        "The Dark Frame",
-        f"Camera 03 watches the corridor outside {clue['place']}. It stopped recording at 02:17, and this is the "
-        "last frame it saved. The night staff say there's a number in it. Bring it back.",
-    )
-    reference, dark = clue_frames(clue)
-    solved = 1 in s.completed_levels
+    now = {**DEFAULTS, **s.get("l1_lab", {}), **{k: s[k] for k in DEFAULTS if k in s}}
+    if now != DEFAULTS:
+        s.l1_touched = True
+    return bool(s.get("l1_touched"))
 
-    if not solved and not flow.mode_choice(
-        1, "The frame is almost black. What's the cheapest way to get the number out of it?",
-        MODE_OPTIONS, "Enhance"):
-        st.image(rgb(dark), width=480)
-        ui.caption("EVIDENCE 03-A · AS RECORDED")
+
+def tool_prediction(clue: dict) -> None:
+    # only before the first slider move: once you've tried, it isn't a prediction any more
+    if "l1_pred_tool" not in st.session_state and lab_touched():
         return
+    flow.predict("l1_pred_tool", "Before you touch anything: which single tool, on its own, makes the plate most "
+                 "readable?", list(SINGLE_TOOLS), resolve=lambda: resolve_tool(clue), reveal=lambda: tool_reveal(clue))
 
-    ctrl_col, view_col = st.columns([1, 2.4], gap="large")
-    with ctrl_col:
-        st.markdown("**Forensic Image Lab**")
-        settings = controls()
 
-    enhanced, timings = enh.run_pipeline(dark, settings)
-    pipeline_ms = sum(ms for _, ms in timings)
-    black0, _ = enh.clipped(dark)
-    black, white = enh.clipped(enhanced)
-    legib, new_clip, quality = measure(enhanced, dark, reference, clue["clue_box"])
+DEBRIEF_SETUPS = {
+    "Reference (gamma 2.4, contrast 2.5)": case.REFERENCE,
+    "Reference + non-local means": {**case.REFERENCE, "denoise_method": "Non-local means"},
+    "Brightness +120 only": {"brightness": 120},
+}
 
-    with view_col:
-        a, b = st.columns(2)
-        with a:
-            st.image(rgb(dark), width="stretch")
-            ui.caption("EVIDENCE 03-A · ORIGINAL")
-        with b:
-            st.image(rgb(enhanced), width="stretch")
-            ui.caption("EVIDENCE 03-A · ENHANCED")
-        ui.readouts([
-            ("Mean brightness", f"{enh.gray(enhanced).mean():.0f} / 255", ""),
-            ("Pure black", f"{black:.1%}", "bad" if black > black0 + 0.02 else ""),
-            ("Pure white", f"{white:.1%}", "bad" if white > 0.02 else ""),
-            ("Clue legibility", f"{legib:.0%}", tone(legib, 0.75, 0.4)),
-            ("Evidence quality", f"{quality:.0%}", tone(quality, case.PASS_QUALITY, 0.4)),
-        ])
-        st.altair_chart(histogram_chart(dark, enhanced), width="stretch")
-        feedback(settings, legib, new_clip, quality, energy_units(pipeline_ms), clue["clue_box"])
 
-    st.divider()
-    if solved:
-        completion_panel(1, [("Clue recovered", clue["label"]),
-                             ("Best evidence quality", f"{s.best_scores.get(1, quality):.0%}")],
-                         par=reference_units(dark))
-        if c.cam04:
-            flow.side_scan(1, cam04_scan(settings, pipeline_ms))
-    else:
-        submit_form(clue, pipeline_ms, quality, new_clip, dark)
+@st.cache_data(show_spinner=False)
+def debrief_runs(clue_id: str) -> list[dict]:
+    """The comparison rows, measured once per photo."""
+    clue = next(c for c in case.CLUES if c["id"] == clue_id)
+    reference, dark = clue_frames(clue)
+    rows = []
+    for name, kw in DEBRIEF_SETUPS.items():
+        out, timings = enh.run_pipeline(dark, enh.Settings(**kw))
+        _, clip, quality = measure(out, dark, reference, clue["clue_box"])
+        rows.append({"setup": name, "quality": quality, "clip": clip, "ms": sum(ms for _, ms in timings)})
+    return rows
 
+
+def debrief_frame(final: dict | None, runs: list[dict]) -> pd.DataFrame:
+    rows = ([{"setup": "Yours", **{k: final[k] for k in ("quality", "clip", "ms")}}] if final else []) + runs
+    return pd.DataFrame([{"setup": r["setup"], "evidence quality": round(r["quality"], 3), "clipped": f"{r['clip']:.1%}",
+                          "ms": round(r["ms"], 1), "battery": pct(energy_units(r["ms"]))} for r in rows])
+
+
+def debrief(clue: dict) -> None:
+    final = st.session_state.get("l1_final")
+    runs = debrief_runs(clue["id"])
+    ref, nlm, bright = runs
+    st.dataframe(debrief_frame(final, runs), hide_index=True, width="stretch")
+    st.caption(f"{ui.tag('measured')} quality, clipping and time, timed on this machine "
+               f"&nbsp;{ui.tag('gameplay')} battery", unsafe_allow_html=True)
+    ratio = energy_units(nlm["ms"]) / energy_units(ref["ms"])
+    yours = (f"Your pass: quality {final['quality']:.2f}, {final['clip']:.1%} clipped, {final['ms']:.1f} ms."
+             if final else "Lookup tables like gamma cost almost nothing.")
     ui.lesson([
-        "Process the input before you spend compute on it. Cheap OpenCV steps can make an expensive model unnecessary.",
-        "Gamma and contrast recover detail hidden in the dark end of the histogram. Brightness alone doesn't: "
-        "it shifts every pixel equally.",
-        "Pushing too far clips pixels to pure black or white, and that information can't come back.",
-        "Enhancement fixes this input at run time. Augmentation prepares the model during training.",
-    ], title="FIELD NOTES")
-    augmentation_panel(reference)
+        f"Non-local means changed quality by {nlm['quality'] - ref['quality']:+.2f} for {ratio:.0f}× the battery "
+        "of the reference pass. Expensive isn't automatically better.",
+        f"Brightness +120 on its own scores {bright['quality']:.2f}: every pixel moves by the same amount, so the "
+        "digits stay as close to the plate as before.",
+        f"{yours} Fix the input before you spend compute on a model.",
+    ], title="DEBRIEF")
 
-    with st.expander("Learn more: histograms, gamma, CLAHE"):
+
+def learn_more() -> None:
+    with st.expander("Learn more: histograms, gamma, CLAHE, normalization"):
         st.markdown(
             r"""
 **Histogram.** For every brightness value from 0 to 255, how many pixels have it. A dark frame piles up on the left.
@@ -399,8 +447,75 @@ small tiles with a limit on how much it can stretch, so it doesn't blow up noise
 
 **Why denoise first?** Every later step amplifies noise. Removing it early means less to amplify.
 
+**Enhancement is not normalization.** Enhancement changes what one frame shows, so a person or a model can read it.
+Input normalization (÷255, or subtracting the dataset mean and dividing by its std) only rescales every input into the
+range the network was trained on. It makes nothing more visible, and it has to match training exactly.
+
 **How legibility is measured.** We know where the plate is and have the clean photo. Legibility is the correlation between
 your plate region and the clean one, times how much contrast the region has compared to the clean one (capped at 1).
 Evidence quality = legibility − 3 × (share of pixels you pushed to pure black or white).
 """
         )
+
+
+def render() -> None:
+    s = st.session_state
+    c = case.get_case(s)
+    clue = c.clue
+    ui.scene_header(
+        "CHAPTER 1 · CAM 03 · 2026-10-07 02:17:44",
+        "The Dark Frame",
+        f"Camera 03 watches the corridor outside {clue['place']}. It stopped recording at 02:17, and this is the "
+        "last frame it saved. The night staff say there's a number in it. Bring it back.",
+    )
+    reference, dark = clue_frames(clue)
+    solved = 1 in s.completed_levels
+
+    if not solved and not flow.mode_choice(
+            1, "The frame is almost black. What's the cheapest way to get the number out of it?",
+            MODE_OPTIONS, "Enhance", needs="a readable plate in this one frame"):
+        st.image(rgb(dark), width=480)
+        ui.caption("EVIDENCE 03-A · AS RECORDED")
+        return
+
+    tool_prediction(clue)
+    ctrl_col, view_col = st.columns([1, 2.4], gap="large")
+    with ctrl_col:
+        st.markdown("**Forensic Image Lab**")
+        settings = controls()
+
+    enhanced, timings = enh.run_pipeline(dark, settings)
+    pipeline_ms = sum(ms for _, ms in timings)
+    legib, new_clip, quality = measure(enhanced, dark, reference, clue["clue_box"])
+
+    with view_col:
+        a, b = st.columns(2)
+        with a:
+            st.image(rgb(dark), width="stretch")
+            ui.caption("EVIDENCE 03-A · ORIGINAL")
+        with b:
+            st.image(rgb(enhanced), width="stretch")
+            ui.caption("EVIDENCE 03-A · ENHANCED")
+        ui.readouts([
+            ("Mean brightness", f"{enh.gray(enhanced).mean():.0f} / 255", ""),
+            (f"Clipped by you (limit {CLIP_LIMIT:.1%})", f"{new_clip:.1%}", clip_tone(new_clip)),
+            ("Clue legibility", f"{legib:.0%}", tone(legib, 0.75, 0.4)),
+            ("Evidence quality", f"{quality:.0%}", tone(quality, case.PASS_QUALITY, 0.4)),
+        ])
+        st.caption(f"{ui.tag('measured')} legibility, clipping, evidence quality &nbsp;{ui.tag('gameplay')} "
+                   f"the {case.PASS_QUALITY:.0%} pass mark and the {CLIP_LIMIT:.0%} clipping limit",
+                   unsafe_allow_html=True)
+        st.altair_chart(histogram_chart(dark, enhanced), width="stretch")
+        feedback(settings, legib, new_clip, quality, energy_units(pipeline_ms), clue["clue_box"])
+
+    st.divider()
+    if solved:
+        completion_panel(1, [("Clue recovered", clue["label"]),
+                             ("Best evidence quality", f"{s.best_scores.get(1, quality):.0%}")],
+                         par=reference_units(dark), debrief=lambda: debrief(clue))
+        if c.cam04:
+            flow.side_scan(1, cam04_scan(settings, pipeline_ms))
+        augmentation_panel(reference)
+    else:
+        submit_form(clue, pipeline_ms, quality, new_clip, dark)
+    learn_more()

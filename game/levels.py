@@ -1,5 +1,7 @@
 """Chapter list, chapter endings, the title screen, the lock screen, the case summary and the about page."""
 
+import re
+
 import streamlit as st
 
 from game import case, device, state
@@ -14,8 +16,25 @@ LEVELS = {
         "question": "What is this one object?"},
     3: {"title": "Find the Anomalies", "mode": "Detect", "concept": "Object detection",
         "question": "What is in this room, and where?"},
-    4: {"title": "The Corrupted Region", "mode": "Segment", "concept": "Segmentation + deployment",
+    4: {"title": "The Corrupted Region", "mode": "Segment", "concept": "Segmentation + quantization",
         "question": "Exactly which pixels are affected?"},
+}
+
+
+# what each chapter taught, and the next question in the player's words. Never names the next task.
+BRIDGES = {
+    1: ("fix the input before you spend compute on it",
+        "three objects, one photo each. What is each one?"),
+    2: ("one label per image is the cheapest answer when a photo holds one thing",
+        "a whole room of things. What is in it, and where is each one?"),
+    3: ("the threshold doesn't change the model, it only decides which guesses you believe",
+        "something is spreading on the wall. Where exactly does it end?"),
+}
+MODULES = {
+    1: "Module 1 · task identification; image preprocessing",
+    2: "Module 2 · classification",
+    3: "Module 6 · detection; module 5 · metrics",
+    4: "Module 6 · segmentation; module 7 · quantization",
 }
 
 
@@ -89,22 +108,41 @@ def ledger_rows(n: int, par: int | None) -> list[tuple[str, str]]:
     return rows
 
 
-def completion_panel(n: int, rows: list[tuple[str, str]], par: int | None = None) -> None:
+def bridge_html(n: int) -> str:
+    learned, question = BRIDGES[n]
+    return (f'<div class="gl-bridge"><div class="gl-kicker">Next</div>You learned that {learned}. '
+            f'<b>Next question:</b> {question}</div>')
+
+
+def inline_quiz(n: int) -> None:
+    from game import codex
+    if hasattr(codex, "inline_quiz"):
+        codex.inline_quiz(n, n=2)
+
+
+def completion_panel(n: int, rows: list[tuple[str, str]], par: int | None = None, debrief=None) -> None:
+    """Report, debrief, quiz, then the way on. Side scan and Learn more come after, from the chapter."""
     from game import flow, nav
     s = st.session_state
     report = s.get(f"l{n}_report")
     if report:
         flow.mission_report(n, report["checks"], report["grade"])
-    left, right = st.columns(2, gap="large")
-    with left:
-        st.markdown(f'<div class="gl-lesson"><div class="title">CHAPTER {n} COMPLETE</div>'
-                    f'{ui.kv_table(xp_rows(n, rows))}</div>', unsafe_allow_html=True)
-    with right:
-        st.markdown(f'<div class="gl-lesson"><div class="title">BATTERY</div>'
-                    f'{ui.kv_table(ledger_rows(n, par))}</div>', unsafe_allow_html=True)
+    with st.expander(f"Chapter {n} XP and battery"):
+        left, right = st.columns(2, gap="large")
+        left.markdown(f'<div class="gl-lesson"><div class="title">CHAPTER {n} COMPLETE</div>'
+                      f'{ui.kv_table(xp_rows(n, rows))}</div>', unsafe_allow_html=True)
+        right.markdown(f'<div class="gl-lesson"><div class="title">BATTERY</div>'
+                       f'{ui.kv_table(ledger_rows(n, par))}</div>', unsafe_allow_html=True)
+    if debrief:
+        st.markdown(f'<div class="gl-kicker" style="margin-top:1rem">Chapter {n} debrief</div>',
+                    unsafe_allow_html=True)
+        debrief()
+    inline_quiz(n)
     text = outro(n, case.get_case(s))
     if text:
         st.markdown(f'<p class="gl-story gl-outro">{text}</p>', unsafe_allow_html=True)
+    if n in BRIDGES:
+        st.markdown(bridge_html(n), unsafe_allow_html=True)
     if n + 1 in nav.PAGES and st.button(f"Continue to Chapter {n + 1}: {LEVELS[n + 1]['title']}", type="primary"):
         st.switch_page(nav.PAGES[n + 1])
 
@@ -152,7 +190,8 @@ def home() -> None:
             grade = s.get("grades", {}).get(n)
             st.markdown(
                 f'<div class="gl-levelrow"><span>{n}. {info["title"]}<br>'
-                f'<span class="q">{info["mode"]} · {info["question"]}</span></span>'
+                f'<span class="q">{info["mode"] + " · " if n in s.completed_levels else ""}{info["question"]}'
+                '</span></span>'
                 f'<span>{ui.stamp(state.status(s, n))}{f" <b class=mono>{grade}</b>" if grade else ""}</span></div>',
                 unsafe_allow_html=True,
             )
@@ -215,17 +254,125 @@ def epilogue(c: case.Case) -> str:
             "empty, and the doors stay open a little longer than they should.")
 
 
+def bench_row(bench: dict, group: str, model_id) -> dict | None:
+    return next((r for r in bench.get(group, []) if r["id"] == model_id), None)
+
+
+def int8_ratios(bench: dict) -> tuple[float, float, float]:
+    """(times smaller, times faster, IoU change) of U-Net Standard INT8 against FP32."""
+    fp, q = bench_row(bench, "unets", "standard-fp32"), bench_row(bench, "unets", "standard-int8")
+    return fp["size_mb"] / q["size_mb"], fp["latency_ms"] / q["latency_ms"], q["iou"] - fp["iou"]
+
+
 def int8_note() -> str:
     from game import runtime
-    fp, q = runtime.profile("unets", "standard-fp32"), runtime.profile("unets", "standard-int8")
-    return (f"Quantizing U-Net Standard to INT8 made it {fp['size_mb'] / q['size_mb']:.1f}× smaller and "
-            f"{fp['latency_ms'] / q['latency_ms']:.1f}× faster, for {fp['iou'] - q['iou']:.3f} IoU (measured).")
+    smaller, faster, delta = int8_ratios(runtime.benchmark())
+    return (f"Quantizing U-Net Standard to INT8 made it {smaller:.1f}× smaller and {faster:.1f}× faster, "
+            f"for {delta:+.3f} IoU (measured).")
+
+
+def chapter_number(n: int, store, bench: dict) -> tuple[str, str]:
+    """(model, the measured number that decided the chapter)."""
+    if n == 1:
+        final = store.get("l1_final")
+        return "OpenCV pipeline, no network", (f"evidence quality {final['quality']:.2f} in {final['ms']:.1f} ms"
+                                               if final else "–")
+    if n == 2:
+        r = bench_row(bench, "classifiers", store.get("l2_model"))
+        label = store.get("l2_anchor_label")
+        said = f"top-1 '{label}', " if label else ""
+        return (r["name"], f"{said}{r['latency_ms']:.1f} ms a scan") if r else ("–", "–")
+    if n == 3:
+        r = bench_row(bench, "detectors", store.get("l3_model"))
+        f1 = store.get("best_scores", {}).get(3)
+        return (r["name"], f"F1 {f1:.2f} at {r['latency_ms']:.1f} ms" if f1 is not None else "–") if r else ("–", "–")
+    deployed = store.get("l4_deployed")
+    r = bench_row(bench, "unets", deployed["id"]) if deployed else None
+    return (deployed["name"], f"IoU {deployed['iou']:.3f} at {r['latency_ms']:.1f} ms") if r else ("–", "–")
+
+
+def recap_rows(store, bench: dict) -> list[dict]:
+    """One row per solved chapter: question, task, model, deciding number, syllabus module."""
+    rows = []
+    for n, info in LEVELS.items():
+        if n not in store.get("completed_levels", ()):
+            continue
+        model, number = chapter_number(n, store, bench)
+        rows.append({"chapter": n, "question": info["question"], "task": info["mode"], "model": model,
+                     "number": number, "module": MODULES[n]})
+    return rows
+
+
+def chapter_forecasts(store) -> list[dict]:
+    """The chapter predictions the player locked in, in chapter order."""
+    keys = sorted(k for k in store.keys() if re.match(r"^l\d_pred_", str(k)))
+    return [store[k] for k in keys if isinstance(store[k], dict) and "choice" in store[k]]
+
+
+def viva_prompts(store, bench: dict) -> list[str]:
+    final = store.get("l1_final") or {}
+    cls = bench_row(bench, "classifiers", store.get("l2_model")) or {}
+    f1 = store.get("best_scores", {}).get(3)
+    smaller, faster, delta = int8_ratios(bench)
+    return [
+        f"Your frame reached evidence quality {final.get('quality', 0):.2f} in {final.get('ms', 0):.1f} ms with "
+        "no neural network. Why fix the input before running a model, and why isn't that augmentation?",
+        f"{cls.get('name', 'The classifier')} answered chapter 2 at {cls.get('latency_ms', 0):.1f} ms a scan. "
+        "Why is classification enough for one object, and what can't it tell you?",
+        f"Your best F1 was {f1 or 0:.2f}. What happens to precision and to recall when you lower the threshold, "
+        "and why can recall never fall?",
+        f"INT8 made U-Net Standard {smaller:.1f}× smaller and {faster:.1f}× faster for {delta:+.3f} IoU. "
+        "Why did that decide chapter 4, and why didn't the bigger model win?",
+    ]
+
+
+def recap_markdown(label: str, rows: list[dict], forecasts: list[dict], prompts: list[str]) -> str:
+    out = [f"# GhostLens · {label}", "", "| Question | Task | Model | Measured | Syllabus |", "|---|---|---|---|---|"]
+    out += [f"| {r['question']} | {r['task']} | {r['model']} | {r['number']} | {r['module']} |" for r in rows]
+    right = sum(1 for f in forecasts if f.get("right"))
+    out += ["", f"## Forecasts: {right}/{len(forecasts)}", ""]
+    out += [f"- {f['q']} You said {f['options'][f['choice']]}. {f.get('why', '')}" for f in forecasts]
+    out += ["", "## Say it out loud", ""] + [f"{i}. {p}" for i, p in enumerate(prompts, start=1)]
+    return "\n".join(out) + "\n"
+
+
+def decisions_table(rows: list[dict]) -> str:
+    body = "".join(f"<tr><td>{r['chapter']}. {r['question']}</td><td>{r['task']}</td><td>{r['model']}</td>"
+                   f"<td>{r['number']}</td><td>{r['module']}</td></tr>" for r in rows)
+    head = (f"<tr><th>Question</th><th>Task</th><th>Model</th><th>Deciding number {ui.tag('measured')}</th>"
+            "<th>Syllabus</th></tr>")
+    return f'<table class="gl-decisions">{head}{body}</table>'
+
+
+def forecast_section(forecasts: list[dict]) -> None:
+    right = sum(1 for f in forecasts if f.get("right"))
+    st.markdown(f'<div class="gl-kicker">Forecasts · {right}/{len(forecasts)} called</div>', unsafe_allow_html=True)
+    if not forecasts:
+        st.caption("No predictions locked in. Each chapter asks for one before the measurement.")
+        return
+    for f in forecasts:
+        mark = "✓" if f.get("right") else "✗" if f.get("right") is False else "·"
+        st.markdown(f"- {mark} {f['q']} You said **{f['options'][f['choice']]}**. {f.get('why', '')}")
+
+
+def explore_section() -> None:
+    from game import lab
+    tabs = getattr(lab, "TABS", [])
+    left = [t for t in tabs if t not in set(st.session_state.get("lab_seen") or ())]
+    if not left or not hasattr(lab, "open_lab"):
+        return
+    st.markdown('<div class="gl-kicker">Still to explore in the Lab</div>', unsafe_allow_html=True)
+    cols = st.columns(3)
+    for i, tab in enumerate(left):
+        if cols[i % 3].button(f"Lab · {tab}", key=f"explore_{tab}", width="stretch"):
+            lab.open_lab(tab)
 
 
 def case_closed() -> None:
-    from game import achievements, codex, flow
+    from game import achievements, codex, flow, runtime
     s = st.session_state
     c = case.get_case(s)
+    bench = runtime.benchmark()
     grades = s.get("grades", {})
     rows = "".join(f"<tr><td>Chapter {n}. {LEVELS[n]['title']}</td><td><b>{grades.get(n, '–')}</b></td></tr>"
                    for n in LEVELS)
@@ -233,19 +380,28 @@ def case_closed() -> None:
         f'<div class="gl-report closed"><div class="grade">✓</div><div>'
         f'<div class="gl-kicker">{case.case_label(s)} · closed</div>'
         f'<b>{case.ANCHORS[c.anchor]["entity"]} is gone.</b> '
-        f'Battery left: {pct(s.battery)}. Total XP: {s.xp}.'
+        f'Battery left: {pct(s.battery)}. Case XP: {s.xp}.'
         f'<table class="mono">{rows}</table></div></div>',
         unsafe_allow_html=True,
     )
-    left, right = st.columns([1.3, 1], gap="large")
-    with left:
-        st.markdown('<div class="gl-kicker">Case file</div>' + ui.kv_table(case_file_rows(c), cls="gl-casesum"),
-                    unsafe_allow_html=True)
-    with right:
-        st.markdown('<div class="gl-kicker">Battery</div>' + ui.kv_table(battery_rows()), unsafe_allow_html=True)
-    chart = flow.battery_timeline_chart()
-    if chart is not None:
-        st.altair_chart(chart, width="stretch")
+    recap = recap_rows(s, bench)
+    st.markdown('<div class="gl-kicker">Four questions, four decisions</div>' + decisions_table(recap),
+                unsafe_allow_html=True)
+    forecasts = chapter_forecasts(s)
+    forecast_section(forecasts)
+    prompts = viva_prompts(s, bench)
+    st.markdown('<div class="gl-kicker">Say it out loud</div>', unsafe_allow_html=True)
+    st.markdown("\n".join(f"{i}. {p}" for i, p in enumerate(prompts, start=1)))
+    explore_section()
+
+    with st.expander("Case file, battery ledger and timeline"):
+        left, right = st.columns([1.3, 1], gap="large")
+        left.markdown('<div class="gl-kicker">Case file</div>' + ui.kv_table(case_file_rows(c), cls="gl-casesum"),
+                      unsafe_allow_html=True)
+        right.markdown('<div class="gl-kicker">Battery</div>' + ui.kv_table(battery_rows()), unsafe_allow_html=True)
+        chart = flow.battery_timeline_chart()
+        if chart is not None:
+            st.altair_chart(chart, width="stretch")
 
     clues = s.get("side_clues", [])
     st.markdown(f'<div class="gl-kicker">Side clues {len(clues)}/{achievements.SIDE_CLUES}</div>',
@@ -256,16 +412,8 @@ def case_closed() -> None:
         st.caption("None logged. Each chapter has an optional side scan once it's solved.")
     if len(clues) >= achievements.SIDE_CLUES:
         st.markdown(f'<p class="gl-story gl-outro">{epilogue(c)}</p>', unsafe_allow_html=True)
-
-    ui.lesson([
-        "Fix the input before you spend compute on it (Chapter 1).",
-        "Classification answers <b>what</b>. It's the cheapest, and enough when there's one object (Chapter 2).",
-        "Detection answers <b>what and where</b>. The threshold trades precision for recall (Chapter 3).",
-        "Segmentation answers <b>which pixels</b>, and costs the most (Chapter 4).",
-        "Augmentation helps a model cope with variety during training. Enhancement fixes one input at run time.",
-        "On a device the best model is the one that meets the memory, latency and accuracy limits, not the biggest.",
-        int8_note(),
-    ], title="CASE NOTES")
+    st.download_button("Download the case file (.md)", recap_markdown(case.case_label(s), recap, forecasts, prompts),
+                       file_name=f"ghostlens_case_{c.seed}.md", mime="text/markdown", type="tertiary")
     codex.badge_strip()
 
 

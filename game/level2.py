@@ -4,6 +4,7 @@ from pathlib import Path
 
 import cv2
 import numpy as np
+import pandas as pd
 import streamlit as st
 
 from cv import classification as clf
@@ -22,6 +23,10 @@ ON = {"padlock": "on", "pocket watch": "in", "teddy bear": "in"}
 ROOM_PHOTO = "living_room.jpg"
 LIMITS = {"latency_ms": 30}
 SCOUT = "yolo26n.pt"
+LIGHT = "yolo26n-cls.pt"
+PHOTOS = {**OBJECTS, "room": ROOM_PHOTO}
+BIGGER_OPTIONS = ["No, every top-1 stays the same", "Yes, on at least one single-object photo",
+                  "Only on the guest's room photo"]
 
 
 def article(word: str) -> str:
@@ -110,12 +115,68 @@ def warm() -> None:
     runtime.yolo("yolo26n-cls.pt")
 
 
-WARMUP = [("Measuring classifiers", runtime.benchmark), ("Loading the light classifier", warm)]
+WARMUP = [("Measuring the models", runtime.benchmark), ("Warming up GhostLens", warm)]
 
 
 def profiles() -> list[dict]:
-    return [{**r, "accuracy": r["published"].replace(" top-1", ""), "accuracy_tag": "published"}
-            for r in runtime.benchmark()["classifiers"]]
+    return [{**r, "accuracy": r["published"].replace(" top-1", ""), "accuracy_tag": "published",
+             "metric": "ImageNet top-1"} for r in runtime.benchmark()["classifiers"]]
+
+
+# does a bigger classifier change the answer?
+
+def changed_items(tops: dict[str, dict[str, str]], light: str = LIGHT) -> set[str]:
+    """Photos where any other model's top-1 differs from the light model's."""
+    return {item for model, row in tops.items() if model != light
+            for item, label in row.items() if label != tops[light][item]}
+
+
+def bigger_model_answer(changed: set[str]) -> int:
+    """Index into BIGGER_OPTIONS."""
+    if not changed:
+        return 0
+    return 1 if changed - {"room"} else 2
+
+
+def top1s(items: list[str]) -> dict[str, dict[str, str]]:
+    return {r["id"]: {item: scan(PHOTOS[item], r["id"])["top"][0][0] for item in items}
+            for r in runtime.benchmark()["classifiers"]}
+
+
+def resolve_bigger() -> tuple[int, str]:
+    changed = changed_items(top1s(list(PHOTOS)))
+    where = ", ".join(sorted(changed)) or "none"
+    return bigger_model_answer(changed), (
+        f"Photos where a bigger model's top-1 differs from YOLO26n-cls: {where}. On one clear object the bigger "
+        "models mostly buy confidence. On a busy room there's no single right label, so they disagree.")
+
+
+def top1_table() -> pd.DataFrame:
+    rows = []
+    for item, filename in PHOTOS.items():
+        row = {"photo": "guest's room" if item == "room" else item}
+        for r in runtime.benchmark()["classifiers"]:
+            label, p = scan(filename, r["id"])["top"][0]
+            row[f"{r['name']} · {r['latency_ms']:.1f} ms"] = f"{label} {p:.0%}"
+        rows.append(row)
+    return pd.DataFrame(rows)
+
+
+def debrief() -> None:
+    record = flow.predict("l2_pred_bigger", "Run all three classifiers on all four photos. Would a bigger model "
+                          "change any top-1 answer?", BIGGER_OPTIONS, resolve=resolve_bigger,
+                          reveal=lambda: st.dataframe(top1_table(), hide_index=True, width="stretch"))
+    if record is None:
+        return
+    st.caption(f"{ui.tag('measured')} top-1 labels and latency on this machine", unsafe_allow_html=True)
+    light, big = runtime.profile("classifiers", LIGHT), runtime.benchmark()["classifiers"][-1]
+    ui.lesson([
+        "Classification answers one question, <b>what does this whole image show?</b>, with a probability for "
+        "every class the model knows.",
+        f"{big['name']} costs {big['latency_ms'] / light['latency_ms']:.1f}× the battery of {light['name']} per "
+        "scan. On one clear object it mostly buys confidence.",
+        "It can't say <b>where</b> anything is, or <b>how many</b>, and it only knows its training labels.",
+    ], title="DEBRIEF")
 
 
 def prob_bars(result: dict) -> None:
@@ -187,18 +248,24 @@ def par() -> int:
     return 4 * energy_units(runtime.profile("classifiers", "yolo26n-cls.pt")["latency_ms"])
 
 
+def size_detail(model_id: str) -> str:
+    model = runtime.profile("classifiers", model_id)
+    same = not changed_items(top1s(list(OBJECTS)))
+    if model_id == LIGHT:
+        return ("same top-1 as the bigger models (measured)" if same
+                else "the light model, though a bigger one disagrees on an object (measured)")
+    return (f"{model['name']} gave the same top-1 as the light model, for more battery (measured)" if same
+            else f"{model['name']} for more battery")
+
+
 def report_checks(model_id: str) -> dict:
     s = st.session_state
-    light = runtime.profile("classifiers", "yolo26n-cls.pt")
-    model = runtime.profile("classifiers", model_id)
     used = device.used_in_level(s, 2)
     misses = flow.mode_misses(2)
     return {
         "Cheapest task that works": (misses == 0, "classification first time" if misses == 0
                                      else f"tried {', '.join(m for m in s.l2_tried if m != 'Classify')} first"),
-        "Right-sized model": (model_id == light["id"], "the light model named every object correctly"
-                              if model_id == light["id"] else f"{model['name']} gave the same answers for more battery"),
-        "Latency target": (model["latency_ms"] <= LIMITS["latency_ms"], f"≤ {LIMITS['latency_ms']} ms per scan"),
+        "Right-sized model": (model_id == LIGHT, size_detail(model_id)),
         "Battery": (efficient(used, par()), f"{pct(used)} used, {pct(par())} would have done it"),
     }
 
@@ -292,12 +359,14 @@ def render() -> None:
     s.setdefault("l2_scanned", {})
 
     if not solved and not flow.mode_choice(
-            2, "Each photo shows a single object. You need to know what each one is.", mode_options(), "Classify"):
+            2, "Each photo shows a single object. You need to know what each one is.", mode_options(), "Classify",
+            needs="a name for each single object"):
         return
 
     model = flow.model_picker(
         2, profiles(), LIMITS, slot="task",
-        note="Accuracy is ImageNet top-1 as published by Ultralytics. Every scan costs the model's measured latency.")
+        note="ImageNet top-1 as published by Ultralytics. Every scan costs the model's measured latency. All three "
+             f"are under the {LIMITS['latency_ms']} ms target, so here it's for information only.")
     if model is None:
         return
     st.divider()
@@ -309,15 +378,9 @@ def render() -> None:
 
     if solved:
         st.divider()
-        completion_panel(2, [("Entity", case.ANCHORS[c.anchor]["entity"]), ("Anchor", c.anchor)], par=par())
+        completion_panel(2, [("Entity", case.ANCHORS[c.anchor]["entity"]), ("Anchor", c.anchor)], par=par(),
+                         debrief=debrief)
         flow.side_scan(2, scout_scan())
-        ui.lesson([
-            "Classification answers one question: <b>what does this whole image show?</b> It's the cheapest task.",
-            "With one object per image, a bigger model mostly buys you higher confidence on the same answer.",
-            "The output is a probability for every class the model knows, and they add up to 100%.",
-            "It can only answer with labels from its training set (ImageNet has no 'pocket watch').",
-            "It doesn't say <b>where</b> anything is, or <b>how many</b>. For that you need detection.",
-        ], title="FIELD NOTES")
 
     with st.expander("Learn more: logits, softmax and confidence"):
         logits = np.array([3.1, 1.4, 0.6, -0.5])
@@ -333,8 +396,9 @@ def render() -> None:
                         for c, z, p in zip(["stopwatch", "compass", "barometer", "clock"], logits, probs))
         )
         st.markdown(
-            "Bigger gaps between logits give a more confident softmax. The YOLO26-cls models are CNNs trained on "
-            "ImageNet (1.28 M photos, 1000 classes). With transfer learning you would replace the last layer and "
-            "retrain it on your own classes, as in the course's flower classifier lab. Published top-1: "
+            "Bigger gaps between logits give a more confident softmax. The YOLO26-cls models are CNNs with one "
+            "attention block (C2PSA) before the head, trained on ImageNet (1.28 M photos, 1000 classes). With "
+            "transfer learning you would keep that backbone, replace the last layer and retrain it on your own "
+            "classes. Published top-1: "
             + ", ".join(f"{v['name']} {v['published']}" for v in CLASSIFIERS.values()) + "."
         )
