@@ -46,9 +46,10 @@ TIPS = [
     ("Latency budget", "A 30 fps camera gives you 33 ms per frame. Preprocessing, the model and drawing the result all have to fit inside that."),
     ("Input resolution", "Halving the input width and height cuts a CNN's compute by about 4×. Small objects are the first thing you lose."),
     ("FLOPs vs speed", "Fewer FLOPs doesn't always mean faster. Memory access, the operations used, and what the chip accelerates all matter."),
-    ("Accelerators", "Phones and boards like the Jetson have GPUs or NPUs for neural networks. The same model can be 10× faster there than on the CPU."),
-    ("Export formats", "Training happens in PyTorch, but devices usually run an exported model: ONNX, TensorRT, Core ML or TFLite."),
-    ("Power", "On a battery device, every millisecond of compute costs energy. A model that's twice as fast can mean twice the battery life."),
+    ("Weight initialization", "Start every weight at zero and every neuron learns the same thing. Kaiming (He) init scales random weights by the layer size so ReLU networks start out stable."),
+    ("Dice loss", "Dice loss scores the overlap between the predicted mask and the true mask. It helps segmentation when the object covers only a small part of the image."),
+    ("Inception and attention", "An Inception block runs 1×1, 3×3 and 5×5 convolutions side by side and stacks the results. Attention blocks learn which channels or regions to weight up."),
+    ("Power", "In GhostLens, battery is charged per millisecond of compute: a game rule. On real hardware energy is roughly power × time, so a faster model on a hungrier chip doesn't always save battery."),
     ("The edge trade-off", "The most accurate model isn't automatically the best one to ship. It has to fit the memory, meet the frame rate, and still be accurate enough."),
     # module 8
     ("Normalization", "Models expect inputs scaled the same way as during training, e.g. ImageNet mean and std. Skip that step and accuracy quietly falls apart."),
@@ -59,10 +60,40 @@ TIPS = [
     ("Gamma", "Gamma correction is a lookup table of 256 values. It's one of the cheapest ways to lift detail out of dark images."),
     ("Histograms", "A histogram piled against the left edge means a dark image. Piled against both edges means clipped pixels, and that detail is gone."),
     ("CLAHE", "CLAHE equalizes contrast in small tiles with a limit, so it brings out local detail without blowing up noise in flat areas."),
+    # added in 0.7, kept at the end so saved tip numbers stay valid
+    ("Image normalization", "Normalization rescales every input the way the training data was scaled, e.g. ÷255 or ImageNet mean and std. Enhancement is different: it changes one image so its content is easier to see."),
+    ("SiLU", "SiLU is x·sigmoid(x). It is smooth, lets small negative values through, and is the activation in every YOLO26 conv block."),
+    ("Linear probe", "A linear probe freezes a pretrained network and trains only one new Linear layer on its features. If that works, the features already separate your classes."),
+    ("Attention", "An attention block computes a weight for every position from the features themselves, so the network can focus on what matters in this image. YOLO26 has one C2PSA block for it."),
+    ("Unstructured pruning", "Setting small weights to zero doesn't make a dense convolution faster: the zeros are still stored and multiplied. Speed comes from removing whole channels or from sparse kernels."),
+    ("Dice and IoU", "Dice = 2·IoU / (1 + IoU). Both ignore the background pixels, which is why they are fairer than pixel accuracy for a small stain."),
 ]
+
+# topics each chapter teaches. A loading screen never shows a topic from the chapter it is loading or a later one
+CHAPTER_TOPICS = {
+    1: ["Gamma", "Histograms", "CLAHE", "Augmentation", "Image normalization"],
+    2: ["Classification", "Softmax", "Transfer learning", "Linear probe"],
+    3: ["IoU", "mAP", "NMS", "Detection labels", "COCO", "Precision and recall"],
+    4: ["Segmentation", "U-Net", "Skip connections", "Dice loss", "Dice and IoU", "Quantization", "Model size",
+        "Pruning", "Unstructured pruning"],
+}
 
 
 def random_tip(exclude: set[int] | None = None) -> tuple[int, str, str]:
     choices = [i for i in range(len(TIPS)) if not exclude or i not in exclude] or list(range(len(TIPS)))
     i = random.choice(choices)
+    return i, *TIPS[i]
+
+
+def pick_tip(chapter: int, seen: set[int] | None = None) -> tuple[int, str, str]:
+    """A tip for the loading screen of `chapter`: an unseen one from the chapter before if possible."""
+    seen = seen or set()
+    banned = {t for n, topics in CHAPTER_TOPICS.items() if n >= chapter for t in topics}
+    allowed = [i for i, (t, _) in enumerate(TIPS) if t not in banned]
+    previous = [i for i in allowed if TIPS[i][0] in CHAPTER_TOPICS.get(chapter - 1, ())]
+    for pool in ([i for i in previous if i not in seen], [i for i in allowed if i not in seen], previous, allowed):
+        if pool:
+            i = random.choice(pool)
+            return i, *TIPS[i]
+    i = random.randrange(len(TIPS))
     return i, *TIPS[i]

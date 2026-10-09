@@ -1,6 +1,7 @@
 """The GhostLens Field Guide: tips found, glossary, quiz and badges."""
 
 import random
+from collections.abc import MutableMapping
 from html import escape
 
 import streamlit as st
@@ -36,10 +37,22 @@ GLOSSARY = [
     ("Pruning", "Removing weights or channels that matter little, to make a model smaller or faster."),
     ("Latency", "Time for one input to go through the model. At 30 fps you have about 33 ms per frame."),
     ("FLOPs / MACs", "Counts of arithmetic operations in one forward pass. One multiply-accumulate (MAC) is about 2 FLOPs."),
-    ("Edge device", "A small computer near the camera, like a phone or a Jetson, with limited memory, power and compute."),
+    ("Edge device", "A small computer near the camera, like a phone or a single-board computer, with limited memory, power and compute."),
     ("COCO", "A dataset of everyday scenes with 80 object classes, boxes and masks. Common for detection and segmentation."),
     ("ImageNet", "A large classification dataset. The usual subset has 1000 classes and about 1.2M training images."),
     ("U-Net", "A segmentation network that downsamples then upsamples, with skip connections that keep fine detail."),
+    ("Skip connection", "A path that carries a tensor past some layers, either added (ResNet) or concatenated (U-Net)."),
+    ("Depthwise convolution", "A conv where each channel gets its own k×k filter (groups = channels). Followed by a 1×1 conv to mix channels."),
+    ("Attention", "A block that computes weights from the features themselves to decide which positions or channels matter most."),
+    ("SiLU", "An activation, x·sigmoid(x). Smooth, slightly negative for small negative x. Used throughout YOLO26."),
+    ("BatchNorm", "Normalizes each channel with the batch mean and std in training, and with stored running statistics at inference."),
+    ("Image normalization", "Scaling inputs the same way as in training, e.g. ÷255 or subtracting the ImageNet mean and dividing by its std."),
+    ("Kaiming init", "Random initial weights with std √(2 / fan_in), chosen so ReLU layers keep the signal size stable."),
+    ("BCE", "Binary cross-entropy. The per-pixel loss our U-Net was trained with. Confident wrong pixels cost the most."),
+    ("Dice", "2·|A∩B| / (|A| + |B|) for two masks. Like IoU it ignores the background; Dice = 2·IoU / (1 + IoU)."),
+    ("Mixup", "Augmentation that blends two images with weight λ and blends their labels the same way."),
+    ("CutMix", "Augmentation that pastes a patch of one image into another and mixes the labels by patch area."),
+    ("Linear probe", "Train only a new last Linear layer on top of a frozen pretrained network, to test how good its features are."),
 ]
 
 # (id, question, options, answer index, explanation)
@@ -82,16 +95,47 @@ QUIZ = [
      "A pretrained backbone already knows edges and textures, so a few hundred images can be enough."),
     ("q19", "What does quantization usually cost?", ["A lot of accuracy", "A small drop in accuracy", "More memory"], 1,
      "Going to INT8 usually loses very little accuracy while making the model about 4× smaller."),
-    ("q20", "Which is the most expensive task per image, usually?", ["Classification", "Detection", "Segmentation"], 2,
-     "Segmentation predicts a label for every pixel, so it usually costs the most."),
+    ("q20", "Same YOLO26s size, three tasks. Which took longest per image in our benchmark?",
+     ["Classification", "Detection", "Segmentation"], 2,
+     "The -seg model predicts boxes plus a mask per object. Cost depends on the network too: our tiny U-Net Lite "
+     "segments the wall faster than YOLO26s detects."),
+    ("q21", "A wall is 10% stain. A mask that marks no stain at all has what pixel accuracy?", ["10%", "50%", "90%"], 2,
+     "Every clean pixel is right, so 90%. Its IoU is 0: pixel accuracy flatters a mask when most pixels are background."),
+    ("q22", "A mask has IoU 0.5. What is its Dice score?", ["0.50", "0.67", "0.75"], 1,
+     "Dice = 2·IoU / (1 + IoU) = 1.0 / 1.5 ≈ 0.67."),
+    ("q23", "You set 50% of a conv's weights to zero but keep the dense tensor. CPU latency usually...",
+     ["Halves", "Stays about the same", "Doubles"], 1,
+     "A dense conv multiplies the zeros too. Removing whole channels or sparse kernels are what make it faster."),
+    ("q24", "Which init keeps activations stable in a deep ReLU network without BatchNorm?",
+     ["All zeros", "Kaiming (He)", "N(0, 1)"], 1,
+     "Kaiming uses std √(2 / fan_in) for ReLU. Zeros make every neuron identical; N(0, 1) makes activations explode."),
+    ("q25", "Mixup with λ = 0.7 of a cat image and 0.3 of a dog image. What is the training label?",
+     ["cat", "0.7 cat + 0.3 dog", "dog"], 1, "Mixup blends the labels with the same λ as the pixels."),
+    ("q26", "A depthwise 3×3 conv on 64 channels has how many weights (no bias)?", ["576", "36,864", "64"], 0,
+     "One 3×3 filter per channel: 3·3·64 = 576. A normal 3×3 conv 64→64 has 36,864."),
+    ("q27", "A model was trained on pixels ÷ 255. You feed it raw 0–255 values. What happens?",
+     ["BatchNorm fixes it", "The output breaks", "It runs faster"], 1,
+     "At inference BatchNorm uses statistics stored during training, so a 255× bigger input throws every layer off."),
+    ("q28", "What does a U-Net skip connection carry?",
+     ["Fine detail from the encoder to the decoder", "The loss value", "Extra training images"], 0,
+     "The decoder gets the full-resolution encoder features back, so mask edges land in the right place."),
 ]
 
+QUIZ_BY_ID = {q[0]: q for q in QUIZ}
 
-def _quiz_correct() -> set:
-    s = st.session_state
-    if not isinstance(s.get("quiz_correct"), set):
-        s["quiz_correct"] = set(s.get("quiz_correct") or ())
-    return s["quiz_correct"]
+# questions that revisit what each chapter just taught
+CHAPTER_QUIZ = {
+    1: ["q13", "q12", "q14", "q27"],
+    2: ["q15", "q18", "q3", "q25"],
+    3: ["q4", "q5", "q7", "q6", "q8", "q17"],
+    4: ["q2", "q21", "q22", "q10", "q19", "q23", "q28"],
+}
+
+
+def _quiz_correct(store: MutableMapping) -> set:
+    if not isinstance(store.get("quiz_correct"), set):
+        store["quiz_correct"] = set(store.get("quiz_correct") or ())
+    return store["quiz_correct"]
 
 
 def tips_tab() -> None:
@@ -131,25 +175,63 @@ def _current_question(done: set):
     return next(q for q in left if q[0] == s["quiz_current"])
 
 
-def check_answer(qid: str, choice: int) -> None:
+def check_answer(store: MutableMapping, qid: str, choice: int, feedback_key: str = "quiz_feedback") -> bool:
+    # quiz XP is kept apart from case XP, so restarting the case doesn't take it away
+    q = QUIZ_BY_ID[qid]
+    done = _quiz_correct(store)
+    if choice != q[3]:
+        store[feedback_key] = ("bad", f"Not quite. {q[4]}")
+        return False
+    gained = qid not in done
+    done.add(qid)
+    store["guide_xp"] = store.get("guide_xp", 0) + QUIZ_XP * gained
+    bonus = f" +{QUIZ_XP} guide XP." if gained else ""
+    store[feedback_key] = ("ok", f"Correct.{bonus} {q[4]}")
+    if feedback_key == "quiz_feedback":
+        store.pop("quiz_current", None)
+    return True
+
+
+def inline_ids(store: MutableMapping, level: int, n: int) -> list[str]:
+    """The n questions shown after a chapter, picked once: ones not yet answered right come first."""
+    key = f"l{level}_iq_ids"
+    if key not in store:
+        pool, done = CHAPTER_QUIZ.get(level, []), _quiz_correct(store)
+        store[key] = ([q for q in pool if q not in done] + [q for q in pool if q in done])[:n]
+    return store[key]
+
+
+def inline_question(level: int, qid: str) -> None:
     s = st.session_state
-    q = next(q for q in QUIZ if q[0] == qid)
-    done = _quiz_correct()
-    if choice == q[3]:
-        if qid not in done:
-            done.add(qid)
-            s["xp"] = s.get("xp", 0) + QUIZ_XP
-        s["quiz_feedback"] = ("ok", f"Correct. +{QUIZ_XP} XP. {q[4]}")
-        s.pop("quiz_current", None)
-    else:
-        s["quiz_feedback"] = ("bad", f"Not quite. {q[4]}")
+    _, text, options, _, _ = QUIZ_BY_ID[qid]
+    key = f"l{level}_iq_{qid}"
+    choice = st.radio(text, range(len(options)), format_func=lambda i: options[i], index=None, key=key)
+    if st.button("Check", key=f"{key}_check", disabled=choice is None):
+        check_answer(s, qid, choice, feedback_key=f"{key}_feedback")
+    if fb := s.get(f"{key}_feedback"):
+        ui.message(escape(fb[1]), fb[0])
+
+
+def inline_quiz(level: int, n: int = 2) -> None:
+    """A short quiz on what the chapter just taught. Right answers pay guide XP once, like the Field guide quiz."""
+    ids = inline_ids(st.session_state, level, n)
+    if not ids:
+        return
+    st.markdown('<div class="gl-kicker">Quick check · guide XP</div>', unsafe_allow_html=True)
+    for qid in ids:
+        inline_question(level, qid)
+
+
+def forget_guide(store: MutableMapping) -> None:
+    for key in ("seen_tips", "quiz_correct", "guide_xp", "quiz_feedback", "quiz_current"):
+        store.pop(key, None)
 
 
 def quiz_tab() -> None:
     s = st.session_state
-    done = _quiz_correct()
-    st.markdown(f'<div class="gl-codex-progress">{len(done)} of {len(QUIZ)} answered right</div>',
-                unsafe_allow_html=True)
+    done = _quiz_correct(s)
+    st.markdown(f'<div class="gl-codex-progress">{len(done)} of {len(QUIZ)} answered right · '
+                f'guide XP {s.get("guide_xp", 0)}</div>', unsafe_allow_html=True)
     if fb := s.get("quiz_feedback"):
         ui.message(escape(fb[1]), fb[0])
     q = _current_question(done)
@@ -160,7 +242,7 @@ def quiz_tab() -> None:
     choice = st.radio(text, range(len(options)), format_func=lambda i: options[i], index=None, key=f"quiz_{qid}")
     c1, c2 = st.columns(2)
     if c1.button("Check", key="quiz_check", disabled=choice is None):
-        check_answer(qid, choice)
+        check_answer(s, qid, choice)
         st.rerun()
     if c2.button("Skip", key="quiz_skip"):
         s.pop("quiz_current", None)
@@ -200,3 +282,8 @@ def render() -> None:
     for tab, fn in zip(tabs, [tips_tab, glossary_tab, quiz_tab, badges_tab]):
         with tab:
             fn()
+    st.divider()
+    st.caption("The field guide stays when you restart the case. This clears it too.")
+    if st.button("Forget the field guide", type="tertiary", key="forget_guide"):
+        forget_guide(st.session_state)
+        st.rerun()

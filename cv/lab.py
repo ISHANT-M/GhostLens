@@ -19,6 +19,10 @@ def conv_output_size(w: int, k: int, p: int, s: int) -> int:
     return (w - k + 2 * p) // s + 1
 
 
+def pool_output_size(w: int, k: int = 2, s: int = 2) -> int:
+    return (w - k) // s + 1
+
+
 def apply_conv(img: np.ndarray, kernel, stride: int = 1, padding: str = "same",
                relu: bool = False, pool: bool = False) -> dict:
     """img is a 2D float array in [0, 1]. Returns every stage as a 2D array."""
@@ -74,10 +78,13 @@ def unet_layer_table(model: nn.Module, size: int = 128) -> list[dict]:
     return rows
 
 
+ACTIVATIONS = ["ReLU", "Leaky ReLU", "SiLU", "Sigmoid", "Tanh", "GELU"]
+
+
 def _act(name: str, x: torch.Tensor, slope: float) -> torch.Tensor:
     if name == "Leaky ReLU":
         return F.leaky_relu(x, slope)
-    return {"ReLU": F.relu, "Sigmoid": torch.sigmoid, "Tanh": torch.tanh, "GELU": F.gelu}[name](x)
+    return {"ReLU": F.relu, "SiLU": F.silu, "Sigmoid": torch.sigmoid, "Tanh": torch.tanh, "GELU": F.gelu}[name](x)
 
 
 def activation_curves(name: str, slope: float = 0.1, x=None) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
