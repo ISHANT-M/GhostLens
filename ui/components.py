@@ -3,9 +3,12 @@
 from html import escape
 from pathlib import Path
 
+import altair as alt
 import streamlit as st
 
 UI_DIR = Path(__file__).parent
+# dark-safe chart colours: brass, green, blue, red, grey, teal
+CHART = ["#C8A464", "#8DBA83", "#7FA7C9", "#E07A66", "#B9B3A6", "#6FB0A8"]
 
 
 def load_css() -> None:
@@ -18,10 +21,48 @@ def _html(markup: str) -> None:
     st.markdown(markup, unsafe_allow_html=True)
 
 
+def title_card(kicker: str, title: str, story: str = "") -> None:
+    text = f'<p class="gl-story">{escape(story)}</p>' if story else ""
+    _html(f'<div class="gl-titlecard"><div class="chapter">{escape(kicker)}</div>'
+          f'<div class="title">{escape(title)}</div><div class="rule"></div>{text}</div>')
+
+
 def scene_header(kicker: str, title: str, story: str) -> None:
-    _html(f'<div class="gl-kicker">{escape(kicker)}</div>')
-    st.header(title, anchor=False)
-    _html(f'<p class="gl-story">{escape(story)}</p>')
+    title_card(kicker, title, story)
+
+
+def objective(text: str) -> None:
+    _html(f'<div class="gl-objective"><span>OBJECTIVE</span>{text}</div>')
+
+
+def feedback(text: str, tone: str = "") -> None:
+    _html(f'<div class="gl-feedback {tone}">{text}</div>')
+
+
+def stage(key: str, ratio=(2.3, 1)):
+    """Scene on the left, the handheld scanner on the right."""
+    left, right = st.columns(list(ratio), gap="medium")
+    return left.container(key=f"stage_{key}"), right.container(key=f"scanner_{key}")
+
+
+def scanner_head(title: str, status: str = "") -> None:
+    extra = f"<span>{escape(status)}</span>" if status else ""
+    _html(f'<div class="gl-scanner-head"><span>{escape(title)}</span>{extra}</div>')
+
+
+def evidence(img_rgb, caption: str) -> None:
+    st.image(img_rgb, width="stretch")
+    _html(f'<div class="gl-caption">{escape(caption)}</div>')
+
+
+def chart(c: alt.Chart) -> None:
+    dim, line, text = "#A7A398", "#2F322D", "#E7E4DA"
+    c = (c.configure(background="transparent")
+         .configure_view(stroke=None)
+         .configure_axis(labelColor=dim, titleColor=dim, gridColor=line, domainColor=line, tickColor=line)
+         .configure_legend(labelColor=text, titleColor=dim)
+         .configure_title(color=text))
+    st.altair_chart(c, width="stretch")
 
 
 def stamp(status: str) -> str:

@@ -23,7 +23,7 @@ def init_state(store: MutableMapping) -> None:
 
 
 def reset_progress(store: MutableMapping) -> None:
-    # demo_mode belongs to a sidebar widget, so it is left alone
+    # demo_mode belongs to a menu toggle, so it is left alone
     for key, value in DEFAULTS.items():
         if key != "demo_mode":
             store[key] = value.copy() if hasattr(value, "copy") else value

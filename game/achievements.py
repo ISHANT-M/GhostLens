@@ -1,16 +1,15 @@
 """Badges, checked against st.session_state (or a plain dict in tests)."""
 
-import re
 from collections.abc import Mapping
 
 from game import device
 
 CORRECT_MODES = {1: "Enhance", 2: "Classify", 3: "Detect", 4: "Segment"}
-QUIZ_TARGET = 5
 TIPS_TARGET = 15
 CLEAN_FRAME = 0.88       # reference settings give 0.847, careful cheap tuning reaches about 0.896
 SIDE_CLUES = 4
-FORECASTS = 3            # chapter predictions called right
+ROOM_SCANS = 3           # chapter 2: the room named in three window scans
+INSPECTED = 3
 
 
 def _solved(store: Mapping) -> set:
@@ -46,8 +45,12 @@ def _straight_a(s):
     return all(grades.get(n) == "A" for n in CORRECT_MODES)
 
 
-def _forecasts_right(s) -> int:
-    return sum(1 for k, v in s.items() if re.match(r"^l\d_pred_", str(k)) and isinstance(v, dict) and v.get("right"))
+def _sweeper(s):
+    return 2 in _solved(s) and len(s.get("l2_room_scans", ())) == ROOM_SCANS
+
+
+def _inspector(s):
+    return len(s.get("l3_inspected", ())) >= INSPECTED
 
 
 def _quantizer(s):
@@ -78,14 +81,12 @@ BADGES = [
     {"id": "scholar", "name": "Scholar", "description": f"Found {TIPS_TARGET} or more loading screen tips.",
      "hint": "Read the tips on loading screens.",
      "check": lambda s: len(s.get("seen_tips", ())) >= TIPS_TARGET},
-    {"id": "student", "name": "Student of the guide",
-     "description": f"Answered {QUIZ_TARGET} field guide quiz questions right.",
-     "hint": "Try the quiz in the field guide.",
-     "check": lambda s: len(s.get("quiz_correct", ())) >= QUIZ_TARGET},
-    {"id": "forecaster", "name": "Forecaster",
-     "description": f"Called {FORECASTS} chapter predictions right before seeing the measurement.",
-     "hint": "Answer the 'Predict first' questions in the chapters.",
-     "check": lambda s: _forecasts_right(s) >= FORECASTS},
+    {"id": "sweeper", "name": "Clean sweep",
+     "description": f"Named the guest's room in {ROOM_SCANS} window scans, no more.",
+     "hint": "In chapter 2, pick windows that each hold something different.", "check": _sweeper},
+    {"id": "inspector", "name": "Inspector",
+     "description": f"Inspected {INSPECTED} or more boxes in chapter 3.",
+     "hint": "Use the box inspector to look at what the detector saw.", "check": _inspector},
     {"id": "fumes", "name": "Running on fumes", "description": "Let the battery hit zero. Oops.",
      "hint": "Not one to aim for.", "check": _fumes},
 ]

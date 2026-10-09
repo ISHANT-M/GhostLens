@@ -22,7 +22,7 @@ def test_energy_units():
 
 @needs_bench
 def test_ideal_run_leaves_a_margin():
-    ideal = CH1_PASS + 4 * cost("classifiers", "yolo26n-cls.pt") + cost("detectors", "yolo26s.pt") \
+    ideal = CH1_PASS + 6 * cost("classifiers", "yolo26n-cls.pt") + cost("detectors", "yolo26s.pt") \
         + cost("unets", "standard-int8")
     assert ideal <= device.BATTERY_START - 50
 

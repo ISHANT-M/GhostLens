@@ -24,8 +24,10 @@ MODE_OUTPUT = {
     "Retrain": "a new model, after hours of training somewhere else",
 }
 MIN_LOADING_SECONDS = 2.8
-# hex copies of the CSS variables, for Altair
-INK, OK, WARN, BAD, SOFT = "#22211F", "#5E7D5A", "#B7862F", "#9C4A3C", "#5B5750"
+# hex copies of the CSS variables, for Altair and OpenCV drawings
+TEXT, DIM, OK, WARN, BAD, BRASS, LINE = "#E7E4DA", "#A7A398", "#8DBA83", "#E2B054", "#E07A66", "#C8A464", "#2F322D"
+INK, SOFT = TEXT, DIM
+CELLS = 4            # the HUD shows the starting 20% as four cells of 5%
 
 
 @dataclass
@@ -51,8 +53,9 @@ def loading_tip(chapter: int, seen: set) -> tuple[int, str, str]:
 
 def loading_html(chapter: int, title: str) -> str:
     # no mode here: the player hasn't chosen one yet
-    return (f'<div class="gl-loading"><div class="chapter">CHAPTER {chapter} / {state.LEVEL_COUNT}</div>'
-            f'<div class="gl-loading-title">{title}</div><div class="mode">preparing GhostLens</div></div>')
+    return (f'<div class="gl-titlecard"><div class="chapter">CHAPTER {chapter} / {state.LEVEL_COUNT}</div>'
+            f'<div class="title">{title}</div><div class="rule"></div>'
+            f'<div class="mode">preparing GhostLens</div></div>')
 
 
 def loading_screen(chapter: int, title: str, work: list[tuple[str, Callable]]) -> None:
@@ -91,19 +94,47 @@ def chip_label(n: int, store) -> str:
     return f"CH {n} · {mode.upper()}" if mode else f"CH {n}"
 
 
-def hud_html(chapter: int) -> str:
+def chip_class(n: int, chapter: int | None, store) -> str:
+    if n == chapter:
+        return "active"
+    if n in store["completed_levels"]:
+        return "done"
+    return "open" if state.is_unlocked(store, n) else "locked"
+
+
+def cellbar_html(units: int) -> str:
+    size = device.BATTERY_START / CELLS
+    full = min(CELLS, -(-units // size)) if units > 0 else 0
+    cells = "".join(f'<i class="{"on" if i < full else "off"}"></i>' for i in range(CELLS))
+    return f'<span class="gl-cellbar {battery_tone(units)}">{cells}</span>'
+
+
+def hud_html(chapter: int | None) -> str:
     s = st.session_state
-    chips = []
-    for n in range(1, state.LEVEL_COUNT + 1):
-        cls = "active" if n == chapter else "done" if n in s.completed_levels else \
-            "open" if state.is_unlocked(s, n) else "locked"
-        chips.append(f'<span class="gl-chip {cls}">{chip_label(n, s)}</span>')
+    chips = "".join(f'<span class="gl-chip {chip_class(n, chapter, s)}">{chip_label(n, s)}</span>'
+                    for n in range(1, state.LEVEL_COUNT + 1))
     low = "LOW POWER · " if device.low_power(s) else ""
-    # the chips already show the chapter, so the left label stays short and the HUD fits on one line
-    return (f'<div class="gl-hud"><span>GHOSTLENS</span>'
-            f'<span class="modes">{"".join(chips)}</span>'
-            f'<span><span class="{battery_tone(s.battery)}">{low}BATTERY {pct(s.battery)}</span> · '
-            f'CASE XP {s.xp}</span></div>')
+    solved = len(s.completed_levels)
+    return (f'<div class="gl-hud"><span class="gl-hud-brand">GHOSTLENS</span>'
+            f'<span class="modes">{chips}</span>'
+            f'<span class="gl-hud-batt">{cellbar_html(s.battery)}'
+            f'<span class="{battery_tone(s.battery)}">{low}BATTERY {pct(s.battery)}</span></span>'
+            f'<span class="gl-hud-mem">MEM {device.memory_used(s):.1f}/{device.MEMORY_MB:.0f} MB</span>'
+            f'<span class="gl-hud-xp">SOLVED {solved}/{state.LEVEL_COUNT} · XP {s.xp}</span></div>')
+
+
+def scanner_status_html() -> str:
+    """Battery, memory and the last charge, for the top of a scanner."""
+    s = st.session_state
+    used = device.memory_used(s)
+    loaded = ", ".join(name for name, _ in s.resident.values()) or "nothing loaded"
+    last = last_entry_html(s.ledger[-1]) if s.ledger else ""
+    mode = "LOW POWER" if device.low_power(s) else "NORMAL"
+    return (f'<div class="gl-screen gl-status"><div class="row"><span>{mode}</span>'
+            f'<span class="{battery_tone(s.battery)}">{pct(s.battery)}</span></div>'
+            f'{battery_meter(s.battery)}'
+            f'<div class="row"><span>Memory</span><span>{used:.1f} / {device.MEMORY_MB:.0f} MB</span></div>'
+            f'<div class="row sub"><span>{loaded}</span></div>{last}</div>')
 
 
 def battery_meter(units: int) -> str:
@@ -121,24 +152,6 @@ def last_entry_html(entry: dict) -> str:
             f"<div class='row sub'><span>{measured}</span><span>{sign}{pct(entry['units'])}</span></div>")
 
 
-def device_panel_html() -> str:
-    s = st.session_state
-    low = device.low_power(s)
-    used = device.memory_used(s)
-    loaded = ", ".join(name for name, _ in s.resident.values()) or "nothing loaded"
-    last = last_entry_html(s.ledger[-1]) if s.ledger else ""
-    return (
-        f'<div class="gl-device{" low" if low else ""}">'
-        f'<div class="head">GHOSTLENS MK.II <span>{"LOW POWER" if low else "NORMAL"}</span></div>'
-        f'<div class="gl-battery {battery_tone(s.battery)}">{pct(s.battery)}</div>'
-        f'{battery_meter(s.battery)}'
-        f'<div class="row sub"><span>of a full pack</span><span>low power below {pct(device.LOW_POWER_BELOW)}</span></div>'
-        f'<div class="row"><span>Model memory</span><span>{used:.1f} / {device.MEMORY_MB:.0f} MB</span></div>'
-        f'<div class="meter"><span style="width:{min(used / device.MEMORY_MB, 1) * 100:.0f}%"></span></div>'
-        f'<div class="row sub"><span>{loaded}</span></div>{last}</div>'
-    )
-
-
 def low_power_toast() -> None:
     s = st.session_state
     if not device.low_power(s):
@@ -154,12 +167,6 @@ def run_cost(level: int, what: str, latency_ms: float, kind: str = "main") -> in
     units = energy_units(latency_ms)
     device.spend(st.session_state, level, what, latency_ms, units, kind)
     return units
-
-
-def cost_line(what: str, latency_ms: float, units: int) -> None:
-    st.markdown(
-        f'<div class="gl-cost">{ui.tag("measured")} {what}: {latency_ms:.0f} ms &nbsp;→&nbsp; '
-        f'{ui.tag("gameplay")} −{pct(units)} battery</div>', unsafe_allow_html=True)
 
 
 def forecast(units: int, allowed: bool) -> str:
@@ -288,7 +295,7 @@ def battery_timeline_chart() -> alt.Chart | None:
     x = alt.X("step:Q", title="run", axis=alt.Axis(tickMinStep=1))
     y = alt.Y("battery:Q", title="battery %", scale=alt.Scale(domainMin=0))
     tooltip = ["what:N", "chapter:Q", alt.Tooltip("battery:Q", format=".1f")]
-    line = alt.Chart(df).mark_line(interpolate="step-after", color=INK, strokeWidth=2).encode(x=x, y=y)
+    line = alt.Chart(df).mark_line(interpolate="step-after", color=BRASS, strokeWidth=2).encode(x=x, y=y)
     low = alt.Chart(pd.DataFrame({"y": [10]})).mark_rule(color=BAD, strokeDash=[6, 4]).encode(y="y:Q")
     start = alt.Chart(pd.DataFrame({"y": [20]})).mark_rule(color=SOFT, strokeDash=[2, 3]).encode(y="y:Q")
     events = df[df.kind.isin(["lobby", "cell", "side"])]
@@ -297,42 +304,49 @@ def battery_timeline_chart() -> alt.Chart | None:
         x=x, y=y, tooltip=tooltip,
         color=alt.Color("kind:N", scale=colors, legend=alt.Legend(title=None, orient="bottom")))
     hover = alt.Chart(df).mark_point(opacity=0, size=60).encode(x=x, y=y, tooltip=tooltip)
-    chart = (low + start + line + hover + points).properties(height=220)
-    return chart.configure_view(stroke=None).configure(background="transparent")
+    return (low + start + line + hover + points).properties(height=220)
 
 
 # mode and model choice
 
-def mode_choice(level: int, question: str, options: dict[str, dict], correct: str, needs: str = "") -> bool:
-    # options: {mode: {"blurb", "verdict", "run": () -> (label, latency_ms) or None, "show": callable,
-    #                  "tier": "Balanced" by default, "latency_ms": cost known before running (optional)}}
+def mode_choice(level: int, objective: str, options: dict[str, dict], correct: str, needs: str = "",
+                scene: Callable[[], None] | None = None) -> bool:
+    """The mode dial. A wrong mode really runs and its output goes on the stage, with one line under it."""
+    s = st.session_state
+    key = f"l{level}_mode"
+    if s.get(key) == correct:
+        return True
+    ui.objective(objective)
+    view, scanner = ui.stage(key)
+    with scanner:
+        ui.scanner_head("GHOSTLENS MK.II · MODE", pct(s.battery))
+        mode_dial(level, options, correct)
+    last = s.get(f"{key}_last")
+    with view:
+        if last and last != correct and options[last].get("show") and not s.get(f"{key}_blocked"):
+            options[last]["show"]()
+        elif scene:
+            scene()
+    if last and last != correct:
+        ui.feedback(wrong_mode_line(level, last, options[last], needs), "bad")
+    return False
+
+
+def mode_dial(level: int, options: dict[str, dict], correct: str) -> None:
     s = st.session_state
     key = f"l{level}_mode"
     tried = s.setdefault(f"l{level}_tried", [])
-    if s.get(key) == correct:
-        ui.message(f"<span class='mono'>MODE · {correct.upper()}</span> &nbsp; {options[correct]['verdict']}", "ok")
-        return True
-
-    st.markdown(f'<div class="gl-choice"><div class="gl-kicker">What do you need to know?</div>{question}</div>',
-                unsafe_allow_html=True)
-    cols = st.columns(len(options))
-    for col, (mode, opt) in zip(cols, options.items()):
-        with col:
-            st.markdown(f'<div class="gl-modecard"><div class="name">{mode.upper()}</div>{opt["blurb"]}</div>',
-                        unsafe_allow_html=True)
-            if st.button(f"Use {mode}", key=f"{key}_{mode}", width="stretch", disabled=mode in tried):
+    with st.container(key=f"dial_l{level}"):
+        for mode, opt in options.items():
+            if st.button(mode, key=f"{key}_{mode}", width="stretch", disabled=mode in tried):
                 tried.append(mode)
                 if mode == correct:
                     s[key] = mode
-                    st.rerun()
-                try_mode(level, opt)
-                s[f"{key}_last"] = mode
+                else:
+                    try_mode(level, opt)
+                    s[f"{key}_last"] = mode
                 st.rerun()
-
-    last = s.get(f"{key}_last")
-    if last and last != correct:
-        wrong_mode_result(level, last, options[last], needs)
-    return False
+            st.markdown(f'<div class="gl-dial-sub">{opt["blurb"]}</div>', unsafe_allow_html=True)
 
 
 def try_mode(level: int, opt: dict) -> None:
@@ -357,21 +371,23 @@ def asked_line(mode: str, needs: str) -> str:
     return f"{asked} This question needs {needs}." if needs else asked
 
 
-def wrong_mode_result(level: int, mode: str, opt: dict, needs: str = "") -> None:
+def wrong_mode_line(level: int, mode: str, opt: dict, needs: str = "") -> str:
     s = st.session_state
     key = f"l{level}_mode"
     if units := s.get(f"{key}_blocked"):
-        ui.message(f"{asked_line(mode, needs)} {opt['verdict']} GhostLens didn't run {mode} mode: not enough "
-                   f"charge to run it (would cost {pct(units)}).", "bad")
-        return
-    st.markdown(f'<div class="gl-wrongmode"><div class="gl-kicker">GhostLens ran {mode} mode</div>'
-                f'{asked_line(mode, needs)}</div>', unsafe_allow_html=True)
-    if opt.get("show"):
-        st.markdown('<div class="gl-kicker">GhostLens returned</div>', unsafe_allow_html=True)
-        opt["show"]()
+        return (f"{asked_line(mode, needs)} GhostLens didn't run {mode} mode: not enough charge to run it "
+                f"(would cost {pct(units)}).")
+    line = f"{asked_line(mode, needs)} {opt.get('line') or opt['verdict']}"
     if cost := s.get(f"{key}_cost"):
-        cost_line(*cost)
-    ui.message(opt["verdict"], "bad")
+        line += f" −{pct(cost[2])}"
+    return line
+
+
+def wrong_mode_lines(level: int, options: dict) -> list[str]:
+    """For the cleared screen: every wrong mode the player tried, with its verdict."""
+    s = st.session_state
+    tried = [m for m in s.get(f"l{level}_tried", []) if m != s.get(f"l{level}_mode") and m in options]
+    return [f"You tried {m} first: {options[m]['verdict']}" for m in tried]
 
 
 def mode_misses(level: int) -> int:
@@ -400,20 +416,16 @@ def card_state(p: dict, slot: str, target_ms: float) -> tuple[bool, str, bool]:
     return False, "", False
 
 
-def model_card_html(p: dict, badge: str, selected: bool, locked: bool) -> str:
+def loadrow_html(p: dict, badge: str, selected: bool, locked: bool) -> str:
+    cls = " selected" if selected else " nofit" if locked else ""
+    metric = p.get("metric", "accuracy")
     intel = f'<div class="intel">FIELD INTEL · {p["intel"]}</div>' if p.get("intel") else ""
-    return (
-        f'<div class="gl-modelcard{" selected" if selected else ""}{" nofit" if locked else ""}">'
-        f'<div class="gl-kicker">{p["tier"]}</div><div class="name">{p["name"]}</div>'
-        f'<table class="mono">'
-        f'<tr><td>size</td><td>{p["size_mb"]:.2f} MB</td></tr>'
-        f'<tr><td>latency</td><td>{p["latency_ms"]:.0f} ms</td></tr>'
-        f'<tr><td>{p.get("metric", "accuracy")}</td><td>{p["accuracy"]}</td></tr>'
-        f'<tr><td>battery/run</td><td>{pct(energy_units(p["latency_ms"]))}</td></tr></table>'
-        f'<div class="tags">{ui.tag("measured")} size, latency &nbsp;{ui.tag(p["accuracy_tag"])} '
-        f'{p.get("metric", "accuracy")} '
-        f'&nbsp;{ui.tag("gameplay")} battery</div>{intel}{badge}</div>'
-    )
+    return (f'<div class="gl-loadrow{cls}"><div class="name">{p["name"]}</div>'
+            f'{p["size_mb"]:.1f} MB · {p["latency_ms"]:.0f} ms · {pct(energy_units(p["latency_ms"]))}/run · '
+            f'{metric} {p["accuracy"]}{intel}{badge}</div>')
+
+
+LOADOUT_FOOTER = "ms/MB measured here · accuracy published · battery = game rule"
 
 
 def model_picker(level: int, profiles: list[dict], limits: dict, slot: str, note: str = "") -> dict | None:
@@ -423,30 +435,24 @@ def model_picker(level: int, profiles: list[dict], limits: dict, slot: str, note
     key = f"l{level}_model"
     chosen = next((p for p in profiles if p["id"] == s.get(key)), None)
     free = device.free_memory(s) + s.resident.get(slot, (None, 0.0))[1]
-
-    st.markdown(
-        f'<div class="gl-limits"><span class="gl-kicker">Mission limits</span>'
-        f'<span>latency ≤ {limits["latency_ms"]:.0f} ms</span><span>memory for this model {free:.1f} MB</span>'
-        f'<span>battery {pct(s.battery)}</span></div>', unsafe_allow_html=True)
-    if note:
-        st.caption(note)
-
+    st.markdown(f'<div class="gl-limits"><span>≤ {limits["latency_ms"]:.0f} ms</span>'
+                f'<span>{free:.1f} MB free</span></div>', unsafe_allow_html=True)
     power_locked = False
-    cols = st.columns(len(profiles))
-    for col, p in zip(cols, profiles):
+    for p in profiles:
         locked, badge, no_power = card_state(p, slot, limits["latency_ms"])
         power_locked |= no_power
         selected = bool(chosen and chosen["id"] == p["id"])
-        with col:
-            st.markdown(model_card_html(p, badge, selected, locked), unsafe_allow_html=True)
-            if st.button("Loaded" if selected else f"Load {p['tier'].lower()}", key=f"{key}_{p['id']}",
-                         disabled=locked or selected, width="stretch"):
-                s[key] = p["id"]
-                s.setdefault(f"l{level}_models_tried", []).append(p["id"])
-                device.load_model(s, slot, p["name"], p["size_mb"])
-                st.rerun()
+        st.markdown(loadrow_html(p, badge, selected, locked), unsafe_allow_html=True)
+        if st.button("Loaded" if selected else f"Load {p['tier'].lower()}", key=f"{key}_{p['id']}",
+                     disabled=locked or selected, width="stretch"):
+            s[key] = p["id"]
+            s.setdefault(f"l{level}_models_tried", []).append(p["id"])
+            device.load_model(s, slot, p["name"], p["size_mb"])
+            st.rerun()
     if power_locked and device.charger_available(s):
         charge_prompt(level, f"l{level}_picker")
+    footer = f"{note} · {LOADOUT_FOOTER}" if note else LOADOUT_FOOTER
+    st.markdown(f'<div class="gl-loadnote">{footer}</div>', unsafe_allow_html=True)
     return chosen
 
 
@@ -460,53 +466,3 @@ def check_rows(checks: dict[str, tuple[bool, str]]) -> str:
 def checklist(title: str, checks: dict[str, tuple[bool, str]]) -> None:
     st.markdown(f'<div class="gl-checklist"><div class="gl-kicker">{title}</div>'
                 f'<table class="mono">{check_rows(checks)}</table></div>', unsafe_allow_html=True)
-
-
-def mission_report(level: int, checks: dict[str, tuple[bool, str]], grade: str) -> None:
-    rows = check_rows(checks)
-    cell = f'<div class="gl-cell">SPARE CELL +{pct(device.A_GRADE_UNITS)}</div>' if grade == "A" else ""
-    st.markdown(
-        f'<div class="gl-report"><div><div class="grade g{grade}">{grade}</div>{cell}</div>'
-        f'<div><div class="gl-kicker">Chapter {level} · mission report · edge engineering grade</div>'
-        f'<table class="mono">{rows}</table></div></div>',
-        unsafe_allow_html=True,
-    )
-
-
-def predict(key: str, question: str, options: list[str], resolve: Callable, reveal: Callable,
-            *, ready: bool = True, xp: int = 5) -> dict | None:
-    """Ask for a guess, lock it, then show the measured answer. resolve() -> (correct index or set, why)."""
-    s = st.session_state
-    record = s.get(key)
-    if record is None:
-        st.markdown(f'<div class="gl-predict"><div class="gl-kicker">Predict first</div>{question}</div>',
-                    unsafe_allow_html=True)
-        choice = st.radio(question, options, index=None, key=f"{key}_choice", label_visibility="collapsed")
-        if st.button("Lock in", key=f"{key}_lock", disabled=choice is None):
-            s[key] = {"q": question, "options": list(options), "choice": options.index(choice),
-                      "correct": None, "why": "", "right": None}
-            st.rerun()
-        return None
-
-    guess = record["options"][record["choice"]]
-    if not ready:
-        ui.message(f"Your guess: <b>{guess}</b>. You'll see if you were right after the next step.")
-        return record
-    if record["right"] is None:
-        correct, why = resolve()
-        correct = set(correct) if isinstance(correct, (set, list, tuple)) else {correct}
-        record.update(correct=sorted(correct), why=why, right=record["choice"] in correct)
-        if record["right"]:
-            pot = "guide_xp" if key.startswith("lab_") else "xp"   # the lab is off the clock
-            s[pot] = s.get(pot, 0) + xp
-    answer = " / ".join(record["options"][i] for i in record["correct"])
-    if record["right"]:
-        ui.message(f"<b>You called it.</b> {record['why']}", "ok")
-    else:
-        ui.message(f"You guessed <b>{guess}</b>, the measurement says <b>{answer}</b>. {record['why']}", "warn")
-    reveal()
-    return record
-
-
-def predictions(store) -> list[dict]:
-    return [v for k, v in store.items() if "_pred_" in k and isinstance(v, dict) and "choice" in v]

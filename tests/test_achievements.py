@@ -1,5 +1,4 @@
 from game import achievements
-from game.codex import QUIZ
 
 
 def ids(store):
@@ -52,19 +51,28 @@ def test_wrong_mode_and_low_battery():
     assert ids(store) == {"fumes"}
 
 
-def test_tips_and_quiz():
-    store = {"seen_tips": set(range(15)), "quiz_correct": {"q1", "q2", "q3", "q4"}}
-    assert ids(store) == {"scholar"}
-    store["quiz_correct"].add("q5")
-    assert "student" in ids(store)
+def test_tips():
+    assert ids({"seen_tips": set(range(14))}) == set()
+    assert ids({"seen_tips": set(range(15))}) == {"scholar"}
+
+
+def test_sweeper_needs_exactly_three_room_scans():
+    scans = [{"win": f"half-{i}-0", "model": "n", "label": str(i), "p": 0.5} for i in range(4)]
+    assert "sweeper" not in ids({"completed_levels": {2}, "l2_room_scans": scans[:2]})
+    assert "sweeper" in ids({"completed_levels": {2}, "l2_room_scans": scans[:3]})
+    assert "sweeper" not in ids({"completed_levels": {2}, "l2_room_scans": scans})
+    assert "sweeper" not in ids({"completed_levels": {1}, "l2_room_scans": scans[:3]})
+
+
+def test_inspector_needs_three_boxes():
+    assert "inspector" not in ids({"l3_inspected": {0, 1}})
+    assert "inspector" in ids({"l3_inspected": {0, 1, 4}})
+
+
+def test_no_quiz_badges_left():
+    assert not {"student", "forecaster"} & {b["id"] for b in achievements.all_badges()}
 
 
 def test_all_badges_have_text():
     for b in achievements.all_badges():
         assert b["name"] and b["description"] and b["hint"] and "check" not in b
-
-
-def test_quiz_bank_valid():
-    assert len({q[0] for q in QUIZ}) == len(QUIZ)
-    for _, text, options, answer, why in QUIZ:
-        assert text and why and 0 <= answer < len(options)
