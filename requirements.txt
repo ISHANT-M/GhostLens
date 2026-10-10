@@ -1,4 +1,4 @@
-# GhostLens, tested on macOS (Apple M3) with Python 3.12
+# GhostLens, Python 3.11 or 3.12 (macOS, Windows, Linux)
 streamlit>=1.50
 ultralytics>=8.4      # YOLO26 classification + detection (pulls in torch, torchvision, opencv)
 torch>=2.5

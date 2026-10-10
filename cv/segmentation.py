@@ -124,7 +124,12 @@ def make_dataset(n: int, seed: int) -> tuple[torch.Tensor, torch.Tensor]:
 
 def train(width: int, data: tuple[torch.Tensor, torch.Tensor], val: tuple[torch.Tensor, torch.Tensor],
           epochs: int = 6, batch: int = 16, log=print) -> tuple[TinyUNet, float]:
-    device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        device = torch.device("mps")
+    else:
+        device = torch.device("cpu")
     torch.manual_seed(0)
     x_all, y_all = data
     model = TinyUNet(width).to(device)
@@ -174,6 +179,15 @@ def load(variant: str = "standard") -> TinyUNet:
     return model.eval()
 
 
+def quant_engine() -> str:
+    # qnnpack on ARM (Apple Silicon), x86/fbgemm on Intel and AMD (Windows, Linux)
+    engines = torch.backends.quantized.supported_engines
+    for name in ("qnnpack", "x86", "fbgemm"):
+        if name in engines:
+            return name
+    return engines[-1]
+
+
 def quantize(model: TinyUNet, calibration: torch.Tensor) -> nn.Module:
     """Post-training static INT8 quantization, calibrated on a few wall images."""
     import copy
@@ -182,10 +196,11 @@ def quantize(model: TinyUNet, calibration: torch.Tensor) -> nn.Module:
     from torch.ao.quantization import get_default_qconfig_mapping
     from torch.ao.quantization.quantize_fx import convert_fx, prepare_fx
 
-    torch.backends.quantized.engine = "qnnpack"
+    engine = quant_engine()
+    torch.backends.quantized.engine = engine
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
-        prepared = prepare_fx(copy.deepcopy(model).eval(), get_default_qconfig_mapping("qnnpack"),
+        prepared = prepare_fx(copy.deepcopy(model).eval(), get_default_qconfig_mapping(engine),
                               (calibration[:1],))
         with torch.no_grad():
             for i in range(0, len(calibration), 8):
