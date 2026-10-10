@@ -21,7 +21,7 @@ MODE_OUTPUT = {
     "Classify": "one label for the whole image",
     "Detect": "a box and a label for each object",
     "Segment": "a label for every pixel",
-    "Retrain": "a new model, after hours of training somewhere else",
+    "Retrain": "a retrained model",
 }
 MIN_LOADING_SECONDS = 2.8
 # hex copies of the CSS variables, for Altair and OpenCV drawings
@@ -103,8 +103,8 @@ def chip_class(n: int, chapter: int | None, store) -> str:
 
 
 def cellbar_html(units: int) -> str:
-    size = device.BATTERY_START / CELLS
-    full = min(CELLS, -(-units // size)) if units > 0 else 0
+    # rounded, so 15% of a 20% start shows three cells, not four; any charge at all keeps one lit
+    full = min(CELLS, max(1, round(units * CELLS / device.BATTERY_START))) if units > 0 else 0
     cells = "".join(f'<i class="{"on" if i < full else "off"}"></i>' for i in range(CELLS))
     return f'<span class="gl-cellbar {battery_tone(units)}">{cells}</span>'
 
@@ -113,14 +113,15 @@ def hud_html(chapter: int | None) -> str:
     s = st.session_state
     chips = "".join(f'<span class="gl-chip {chip_class(n, chapter, s)}">{chip_label(n, s)}</span>'
                     for n in range(1, state.LEVEL_COUNT + 1))
-    low = "LOW POWER · " if device.low_power(s) else ""
+    batt = "LOW POWER" if device.low_power(s) else "BATTERY"
     solved = len(s.completed_levels)
+    # the right-hand group wraps as one piece, so a narrow window gives two tidy lines
     return (f'<div class="gl-hud"><span class="gl-hud-brand">GHOSTLENS</span>'
-            f'<span class="modes">{chips}</span>'
+            f'<span class="modes">{chips}</span><span class="gl-hud-right">'
             f'<span class="gl-hud-batt">{cellbar_html(s.battery)}'
-            f'<span class="{battery_tone(s.battery)}">{low}BATTERY {pct(s.battery)}</span></span>'
+            f'<span class="{battery_tone(s.battery)}">{batt} {pct(s.battery)}</span></span>'
             f'<span class="gl-hud-mem">MEM {device.memory_used(s):.1f}/{device.MEMORY_MB:.0f} MB</span>'
-            f'<span class="gl-hud-xp">SOLVED {solved}/{state.LEVEL_COUNT} · XP {s.xp}</span></div>')
+            f'<span class="gl-hud-xp">SOLVED {solved}/{state.LEVEL_COUNT} · XP {s.xp}</span></span></div>')
 
 
 def scanner_status_html() -> str:
@@ -183,8 +184,10 @@ def charge_prompt(level: int, key: str) -> None:
     if not device.charger_available(s):
         st.caption(f"Not enough charge. The lobby charger only takes packs below {pct(device.LOW_POWER_BELOW)}.")
         return
+    n = device.active_level(s, level)
+    report = "this chapter's report" if n == level else f"the Chapter {n} report"
     ui.message(f"Walk to the lobby charger: +{pct(device.CHARGER_UNITS)} battery for {device.CHARGER_XP} XP. "
-               "The trip goes on this chapter's report.", "warn")
+               f"The trip goes on {report}.", "warn")
     if st.button(f"Walk to the lobby · +{pct(device.CHARGER_UNITS)} for −{device.CHARGER_XP} XP", key=f"lobby_{key}"):
         device.lobby_charge(s, level)
         st.rerun()
@@ -429,9 +432,10 @@ LOADOUT_FOOTER = "ms/MB measured here · accuracy published · battery = game ru
 
 
 def model_picker(level: int, profiles: list[dict], limits: dict, slot: str, note: str = "",
-                 locked: bool = False) -> dict | None:
+                 locked: bool = False, ready: bool = False, footer: str = LOADOUT_FOOTER) -> dict | None:
     # profile keys: id, name, tier, size_mb, latency_ms, accuracy, accuracy_tag, intel (optional).
     # Returns the profile once loaded. locked: reviewing a cleared chapter, so nothing can be swapped or paid for.
+    # ready: the loaded model already did its paid run and everything after it is free.
     s = st.session_state
     key = f"l{level}_model"
     chosen = next((p for p in profiles if p["id"] == s.get(key)), None)
@@ -439,20 +443,30 @@ def model_picker(level: int, profiles: list[dict], limits: dict, slot: str, note
     st.markdown(f'<div class="gl-limits"><span>≤ {limits["latency_ms"]:.0f} ms</span>'
                 f'<span>{free:.1f} MB free</span></div>', unsafe_allow_html=True)
     power_locked, review = False, locked
+    # once the loaded model is ready, the other rows fold into one line of swap buttons to keep the scanner short
+    compact = ready and chosen is not None
+    head = st.container() if compact else st
+    rows = st.container(key=f"l{level}_swap", horizontal=True) if compact else st
     for p in profiles:
-        locked, badge, no_power = card_state(p, slot, limits["latency_ms"])
-        power_locked |= no_power
         selected = bool(chosen and chosen["id"] == p["id"])
-        st.markdown(loadrow_html(p, badge, selected, locked), unsafe_allow_html=True)
-        if st.button("Loaded" if selected else f"Load {p['tier'].lower()}", key=f"{key}_{p['id']}",
-                     disabled=locked or selected or review, width="stretch"):
+        if selected:
+            locked, no_power = False, False
+            badge = f'<div class="gl-badge ok">LOADED{" · READY" if ready else ""}</div>'
+        else:
+            locked, badge, no_power = card_state(p, slot, limits["latency_ms"])
+        power_locked |= no_power
+        if selected or not compact:
+            head.markdown(loadrow_html(p, badge, selected, locked), unsafe_allow_html=True)
+        tip = f"{p['name']} · {p['size_mb']:.1f} MB · {p['latency_ms']:.0f} ms" if compact else None
+        if rows.button("Loaded" if selected else f"Load {p['tier'].lower()}", key=f"{key}_{p['id']}",
+                        disabled=locked or selected or review, width="stretch", help=tip):
             s[key] = p["id"]
             s.setdefault(f"l{level}_models_tried", []).append(p["id"])
             device.load_model(s, slot, p["name"], p["size_mb"])
             st.rerun()
-    if power_locked and not review and device.charger_available(s):
+    if power_locked and not review and not ready and device.charger_available(s):
         charge_prompt(level, f"l{level}_picker")
-    footer = f"{note} · {LOADOUT_FOOTER}" if note else LOADOUT_FOOTER
+    footer = f"{note} · {footer}" if note else footer
     st.markdown(f'<div class="gl-loadnote">{footer}</div>', unsafe_allow_html=True)
     return chosen
 

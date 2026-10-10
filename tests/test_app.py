@@ -233,3 +233,61 @@ def test_full_app_play_through_and_restart():
     assert s.completed_levels == set() and s.battery == START and s.grades == {}
     assert s.case_seed != SEED and s.seen_tips >= {1, 2, 3}
     assert not [k for k in s if k.startswith("l4_")]
+
+
+def test_project_page_reads_as_a_course_project():
+    at = AppTest.from_string("from game import levels\nlevels.project()").run()
+    assert not at.exception
+    text = texts(at)
+    for part in ("Edge AI in this project", "On-device, offline", "Memory budget", "Latency budget",
+                 "1 ms = 1 unit = 0.1%", "INT8 quantization", "Model selection", "Battery rules",
+                 "UCS668 Edge AI and Robotics", levels_team(), "github.com/ISHANT-M/GhostLens", "MIT licence"):
+        assert part in text, part
+    for n in (1, 2, 3, 4):
+        assert f"CH {n}<b>" in text
+    assert "precision, recall, F1 at IoU 0.5" in text and "TinyUNet" in text
+    bench = edge.load_benchmark()
+    if bench is None:
+        assert "setup_models.py" in text
+    else:
+        table = next(m.value for m in at.markdown if "gl-bench" in m.value)
+        assert table.count("<tr>") == 1 + sum(len(bench[g]) for g in ("classifiers", "detectors", "segmenters", "unets"))
+        assert "Machine:" in table and "YOLO26n-cls" in table and "U-Net Standard INT8" in table
+
+
+def levels_team() -> str:
+    from game import levels
+    return levels.TEAM
+
+
+def test_project_page_is_in_the_menu_and_on_home():
+    at = app()
+    assert any(getattr(p, "label", "") == "Project" for p in at.get("page_link"))
+    assert any(p.label.startswith("Project · UCS668") for p in at.get("page_link"))
+    at = open_page(at, "about")
+    assert not at.exception
+    assert "Edge AI in this project" in texts(at)
+
+
+def test_menu_hides_the_lobby_charger_after_the_case_is_closed():
+    at = AppTest.from_file("../app.py", default_timeout=300)
+    at.session_state.case_seed = SEED
+    at.session_state.completed_levels = {1, 2, 3}
+    at.session_state.ledger = []
+    at.session_state.battery = 30
+    at.run()
+    assert not at.exception
+    assert at.button(key="lobby_menu")
+    at.session_state.completed_levels = {1, 2, 3, 4}
+    at.run()
+    assert not [b for b in at.button if b.key == "lobby_menu"]
+
+
+def test_sound_stays_off_once_switched_off():
+    at = app()
+    assert at.session_state.sound_on and at.get("iframe")
+    at.toggle(key="sound").set_value(False).run()
+    assert at.session_state.sound_on is False
+    at.run()
+    assert at.session_state.sound_on is False and not at.get("iframe")
+    assert at.toggle(key="sound").value is False

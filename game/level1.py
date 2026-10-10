@@ -79,6 +79,13 @@ def reference_units(dark: np.ndarray) -> int:
     return energy_units(sum(ms for _, ms in timings))
 
 
+def stored_par(dark: np.ndarray) -> int:
+    s = st.session_state
+    if "l1_par" not in s:
+        s.l1_par = reference_units(dark)
+    return s.l1_par
+
+
 def clip_tone(new_clip: float) -> str:
     if new_clip > 3 * CLIP_LIMIT:
         return "bad"
@@ -268,10 +275,9 @@ def mode_options() -> dict:
         },
         "Retrain": {
             "blurb": "Train on dark examples",
-            "line": "Training happens on a big machine before deployment, not on a handheld at 3 am.",
-            "verdict": "That's augmentation, and it's the right idea for the next version of GhostLens. But training "
-                       "happens on a big machine before deployment, not on a handheld in a corridor at 3 am. "
-                       "Right now you need this one frame readable.",
+            "line": "Training happens on a big machine before deployment.",
+            "verdict": "That's augmentation, a fix for the next version. Training happens on a big machine before "
+                       "deployment. Right now you need this one frame readable.",
         },
     }
 
@@ -324,7 +330,7 @@ def cam04_scan(settings: enh.Settings, pipeline_ms: float) -> flow.SideScan:
 
     return flow.SideScan(
         key="cam04", title="CAM 04 · stairwell",
-        blurb=f"Camera 04 covers the stairwell by {c.cam04['place']}. It kept recording two minutes longer than "
+        blurb=f"Camera 04 covers the stairwell outside {c.cam04['place']}. It kept recording two minutes longer than "
               "camera 03, just as dark. Run your final settings on its last frame. It's logged if the "
               f"evidence quality reaches {case.PASS_QUALITY:.0%}.",
         what="Forensic pass on CAM 04", latency_ms=pipeline_ms, reward_xp=20, clue=cam04_clue(c),
@@ -352,9 +358,11 @@ def submit_form(clue: dict, settings: enh.Settings, pipeline_ms: float, quality:
     if quality < case.PASS_QUALITY:
         return (f"Right number, but nobody accepts a frame at {quality:.0%} evidence quality. "
                 f"Get it to {case.PASS_QUALITY:.0%}.", "warn")
+    # par is timed once here and stored, so the report and the cleared screen show the same number
+    s.l1_par = reference_units(dark)
     s.l1_final = {"settings": dict(s.l1_lab), "pipeline": asdict(settings), "quality": quality, "clip": new_clip,
                   "ms": pipeline_ms}
-    finish_level(1, quality, s.l1_attempts, report_checks(pipeline_ms, new_clip, reference_units(dark)),
+    finish_level(1, quality, s.l1_attempts, report_checks(pipeline_ms, new_clip, s.l1_par),
                  clue=clue["label"])
     return None
 
@@ -510,7 +518,7 @@ def cleared(c: case.Case, reference: np.ndarray, dark: np.ndarray) -> levels.Cle
         side=cam04_scan(settings, final["ms"]) if c.cam04 else None,
         stats=[("Clue recovered", clue["label"]),
                ("Best evidence quality", f"{s.get('best_scores', {}).get(1, final['quality']):.0%}")],
-        par=reference_units(dark),
+        par=stored_par(dark),
     )
 
 

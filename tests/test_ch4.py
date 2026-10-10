@@ -102,6 +102,21 @@ def test_cleanup_off_leaves_iou_alone_and_on_changes_it():
 
 
 @needs_models
+def test_cleanup_that_costs_the_limit_says_so():
+    seed = CASE.wall_seed
+    _, truth = level4.scene(seed)
+    raw = level4.wall_probs("standard", True, seed) > 0.5
+    assert seg.mask_iou(seg.clean_mask(raw, 9, 0), truth) < level4.LIMITS["iou"] <= seg.mask_iou(raw, truth)
+    at = to_play(page(4))
+    at.select_slider(key="l4_open").set_value(9).run()
+    at = click_key(at, "l4_purify")
+    assert 4 not in at.session_state.completed_levels
+    shown = texts(at)
+    assert "switch the cleanup off" in shown and "Adjust the mask threshold or the cleanup" in shown
+    assert "nearer 0.5" not in shown and "quantize this one" not in shown
+
+
+@needs_models
 def test_probability_view_and_int8_diff_render():
     at = to_play(page(4), int8=False)
     assert at.radio(key="l4_view").options == ["Mask", "Probability", "Box"]   # no diff before both have run

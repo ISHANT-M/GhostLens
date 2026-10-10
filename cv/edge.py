@@ -1,6 +1,7 @@
 """Measure size and speed of every model once and save it to models/benchmark.json."""
 
 import json
+import platform
 import statistics
 import time
 
@@ -88,8 +89,26 @@ def benchmark_all(log=print) -> dict:
                 "size_mb": round(seg.state_size_mb(m), 2), "latency_ms": ms, "iou": round(seg.evaluate(m, val), 3),
             })
 
+    out["machine"] = machine_info()
     BENCHMARK_FILE.write_text(json.dumps(out, indent=2))
     return out
+
+
+def machine_info() -> str:
+    """A short description of the CPU the numbers come from."""
+    cpu = platform.processor() or platform.machine()
+    if platform.system() == "Darwin":
+        name = f"macOS {platform.mac_ver()[0]}"
+    else:
+        name = f"{platform.system()} {platform.release()}"
+    return f"{name} · {cpu} · Python {platform.python_version()} · torch {torch.__version__}"
+
+
+def benchmark_machine(bench: dict) -> tuple[str, bool]:
+    """(machine, True if benchmark.json recorded it). Older files don't, so fall back to this machine."""
+    if bench.get("machine"):
+        return bench["machine"], True
+    return machine_info(), False
 
 
 def load_benchmark() -> dict | None:

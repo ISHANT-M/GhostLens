@@ -36,9 +36,9 @@ def reset_device(store: MutableMapping) -> None:
     store.pop("runs", None)        # the old log, replaced by the ledger
 
 
-def _log(store: MutableMapping, level: int, what: str, ms: float, units: int, kind: str) -> None:
+def _log(store: MutableMapping, level: int, what: str, ms: float, units: int, kind: str, reserve: int = 0) -> None:
     store["ledger"].append({"level": level, "what": what, "ms": ms, "units": units, "kind": kind,
-                            "battery": store["battery"]})
+                            "battery": store["battery"], "reserve": reserve})
 
 
 def _add(store: MutableMapping, units: int) -> None:
@@ -46,9 +46,11 @@ def _add(store: MutableMapping, units: int) -> None:
 
 
 def spend(store: MutableMapping, level: int, what: str, latency_ms: float, units: int, kind: str = "main") -> None:
+    # a light model on the emergency reserve costs more than is left; the part past 0 is logged as reserve
+    reserve = max(0, units - store["battery"])
     store["battery"] = max(0, store["battery"] - units)
     store["battery_low_mark"] = min(store.get("battery_low_mark", BATTERY_START), store["battery"])
-    _log(store, level, what, latency_ms, units, kind)
+    _log(store, level, what, latency_ms, units, kind, reserve)
 
 
 def used_in_level(store: MutableMapping, level: int, kind: str = "main") -> int:
@@ -68,8 +70,13 @@ def low_power(store: MutableMapping) -> bool:
     return store["battery"] < LOW_POWER_BELOW
 
 
+def case_closed(store: MutableMapping) -> bool:
+    return set(LEVELS) <= set(store.get("completed_levels", ()))
+
+
 def charger_available(store: MutableMapping) -> bool:
-    return low_power(store)
+    # once the case is closed there is nothing left to charge for
+    return low_power(store) and not case_closed(store)
 
 
 def active_level(store: MutableMapping, level: int) -> int:
@@ -119,6 +126,7 @@ def summary(store: MutableMapping) -> dict:
         "spare_cells": sum(1 for r in ledger if r["kind"] == "cell"),
         "lobby_trips": lobby_trips(store),
         "side_scans": sum(1 for ok in store.get("side_scans", {}).values() if ok),
+        "reserve": sum(r.get("reserve", 0) for r in ledger),
     }
 
 

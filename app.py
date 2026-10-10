@@ -64,14 +64,14 @@ level_pages = {
 }
 lab_page = st.Page(lab.render, title="Lab", url_path="lab")
 guide = st.Page(codex.render, title="Field guide", url_path="guide")
-about = st.Page(levels.about, title="About", url_path="about")
+about = st.Page(levels.project, title="Project", url_path="about")
 nav.PAGES.update({"home": home, "lab": lab_page, "guide": guide, "about": about, **level_pages})
 page = st.navigation([home, *level_pages.values(), lab_page, guide, about], position="hidden")
 
 
 def lobby_charger() -> None:
     s = st.session_state
-    if not device.charger_available(s):
+    if not device.charger_available(s):   # also hidden once the case is closed
         return
     n = device.active_level(s, s.current_level)
     st.caption(f"Lobby charger: +{device.pct(device.CHARGER_UNITS)} battery for {device.CHARGER_XP} XP. "
@@ -82,9 +82,13 @@ def lobby_charger() -> None:
         st.rerun()
 
 
+def _sound_changed() -> None:
+    st.session_state.sound_on = st.session_state.sound
+
+
 def menu() -> None:
     s = st.session_state
-    with st.popover("Menu"):
+    with st.popover("Menu", key="menu", on_change="rerun"):
         st.markdown(f'<div class="gl-kicker">{case.case_label(s)}</div>', unsafe_allow_html=True)
         st.page_link(home, label="Case file")
         for n, p in level_pages.items():
@@ -93,9 +97,10 @@ def menu() -> None:
                          disabled=status == "LOCKED")
         st.page_link(lab_page, label="Lab")
         st.page_link(guide, label="Field guide")
-        st.page_link(about, label="About")
+        st.page_link(about, label="Project")
         st.divider()
-        st.toggle("Sound", key="sound", value=True)
+        # sound_on is a plain key, so it survives runs where the widget's own state is dropped
+        st.toggle("Sound", key="sound", value=s.sound_on, on_change=_sound_changed)
         st.toggle("Demo mode", key="demo_mode", help="Unlocks every chapter. Handy for presentations.")
         lobby_charger()
         if st.button("Restart the case", type="tertiary", key="restart", help="New case. The field guide is kept."):
@@ -103,16 +108,26 @@ def menu() -> None:
             st.switch_page(home)
 
 
+# on by default for a new session; once switched off it stays off until switched back on
+# GHOSTLENS_MUTE=1 starts with sound off (handy while testing)
+st.session_state.setdefault("sound_on", os.environ.get("GHOSTLENS_MUTE") != "1")
+chapter = int(page.url_path[5:]) if page.url_path.startswith("level") else None
+# a page link doesn't close the popover by itself, so close it whenever the page changes
+if st.session_state.get("menu_page") != page.url_path:
+    st.session_state.menu_page = page.url_path
+    st.session_state.menu = False
+
 with st.container(key="hud", horizontal=True, vertical_alignment="center"):
     hud = st.empty()
     menu()
-if st.session_state.get("sound", True):
+# filled now so it never sits empty while the page runs, and again after it
+hud.markdown(flow.hud_html(chapter), unsafe_allow_html=True)
+if st.session_state.sound_on:
     with st.container(key="audio"):
         st.iframe(AUDIO, height=1)
 
 page.run()
 
-# filled after the page ran, so battery and XP include whatever just happened
-chapter = int(page.url_path[5:]) if page.url_path.startswith("level") else None
+# filled again after the page ran, so battery and XP include whatever just happened
 hud.markdown(flow.hud_html(chapter), unsafe_allow_html=True)
 flow.low_power_toast()

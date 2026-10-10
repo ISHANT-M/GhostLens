@@ -53,6 +53,21 @@ def test_miss_nothing_lines():
 
 
 @needs_models
+def test_charger_stays_in_reach_when_the_light_detector_falls_short():
+    at = page(3)
+    at.session_state.battery = 30           # enough for the light detector, not for YOLO26s
+    at.session_state.battery_low_mark = 30
+    at.session_state.xp = 50
+    at = click_key(at.run(), "l3_mode_Detect")
+    at = click(at, "Load light")
+    at = click(at, "Run YOLO26n")
+    assert at.button(key="l3_model_yolo26s.pt").disabled
+    assert "lobby_l3_picker" in [b.key for b in at.button]   # it can't meet the brief, so a charge is offered
+    at.button(key="lobby_l3_picker").click().run()
+    assert not at.button(key="l3_model_yolo26s.pt").disabled
+
+
+@needs_models
 def test_recovery_from_an_empty_battery():
     at = page(3, seed_where(brief="miss_nothing"))
     at.session_state.battery = 0

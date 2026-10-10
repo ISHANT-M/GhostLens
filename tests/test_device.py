@@ -83,7 +83,17 @@ def test_summary():
     s["side_scans"]["cam04"] = True
     got = device.summary(s)
     assert got == {"start": 200, "left": 206, "lowest": 196, "spent_main": 2, "spent_side": 2,
-                   "spare_cells": 1, "lobby_trips": 0, "side_scans": 1}
+                   "spare_cells": 1, "lobby_trips": 0, "side_scans": 1, "reserve": 0}
+
+
+def test_emergency_reserve_keeps_the_summary_adding_up():
+    s = fresh()
+    device.spend(s, 1, "big run", 195, 195)
+    device.spend(s, 1, "light run on the reserve", 7, 7)   # only 5 left
+    device.lobby_charge(s, 1)
+    d = device.summary(s)
+    assert s["battery"] == device.CHARGER_UNITS and d["reserve"] == 2
+    assert d["start"] - d["spent_main"] - d["spent_side"] + d["reserve"] + device.CHARGER_UNITS == d["left"]
 
 
 def test_reset_and_old_session_migration():
@@ -104,3 +114,13 @@ def test_memory_and_fit():
     assert device.fits(s, 15, replacing="watchdog")
     device.unload(s, "watchdog")
     assert device.memory_used(s) == 0
+
+
+def test_no_lobby_charger_once_the_case_is_closed():
+    s = fresh(battery=30, xp=100)
+    s["completed_levels"] = {1, 2, 3}
+    assert device.charger_available(s)
+    s["completed_levels"] = {1, 2, 3, 4}
+    assert device.low_power(s) and not device.charger_available(s)
+    assert device.lobby_charge(s, 4) == 0
+    assert s["battery"] == 30 and s["xp"] == 100

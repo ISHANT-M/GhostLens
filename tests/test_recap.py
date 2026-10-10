@@ -16,6 +16,13 @@ def test_chip_names_the_mode_only_once_chosen():
     assert flow.chip_label(3, {"l3_mode": "Detect"}) == "CH 3 · DETECT"
 
 
+def test_cell_bar_rounds_to_the_nearest_cell():
+    def lit(units):
+        return flow.cellbar_html(units).count('class="on"')
+    assert [lit(u) for u in (200, 151, 138, 68, 5, 0)] == [4, 3, 3, 1, 1, 0]
+    assert lit(1000) == flow.CELLS
+
+
 def test_loading_screen_and_warmup_never_name_a_task():
     words = ("enhanc", "classif", "detect", "segment", "u-net")
     for n, info in levels.LEVELS.items():

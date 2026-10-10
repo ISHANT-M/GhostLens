@@ -22,6 +22,8 @@ html, body, [data-testid="stApp"], [data-testid="stAppViewContainer"] {
 [data-testid="stHeader"] { background: transparent; }
 
 .block-container { max-width: 1240px; padding-top: 1.2rem; }
+/* Streamlit's wide layout keeps 5rem each side; 3rem leaves room for the HUD on one line at 1280 px */
+@media (min-width: 900px) { .block-container { padding-left: 3rem; padding-right: 3rem; } }
 
 h1, h2, h3 { letter-spacing: -0.01em; font-weight: 650; color: var(--text); }
 h1 { font-size: 2rem; }
@@ -41,37 +43,41 @@ a { color: var(--brass); }
 .gl-story { color: var(--text-dim); font-size: 1.02rem; max-width: 46rem; }
 
 /* buttons */
-[data-testid="stBaseButton-primary"] {
+[data-testid="stBaseButton-primary"], [data-testid="stBaseButton-primaryFormSubmit"] {
   background: var(--brass); color: var(--brass-ink); border: 1px solid var(--brass); border-radius: var(--r-sm);
   font-family: var(--font-mono); font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em;
 }
-[data-testid="stBaseButton-primary"]:hover { background: #D4B377; border-color: #D4B377; color: var(--brass-ink); }
-[data-testid="stBaseButton-primary"] p { font-family: var(--font-mono); font-size: 13px; }
-[data-testid="stBaseButton-secondary"] {
+[data-testid="stBaseButton-primary"]:hover, [data-testid="stBaseButton-primaryFormSubmit"]:hover { background: #D4B377; border-color: #D4B377; color: var(--brass-ink); }
+[data-testid="stBaseButton-primary"] p, [data-testid="stBaseButton-primaryFormSubmit"] p { font-family: var(--font-mono); font-size: 13px; }
+[data-testid="stBaseButton-secondary"], [data-testid="stBaseButton-secondaryFormSubmit"] {
   background: transparent; color: var(--text); border: 1px solid var(--line-strong); border-radius: var(--r-sm);
 }
-[data-testid="stBaseButton-secondary"]:hover { border-color: var(--brass); color: var(--text); }
+[data-testid="stBaseButton-secondary"]:hover, [data-testid="stBaseButton-secondaryFormSubmit"]:hover { border-color: var(--brass); color: var(--text); }
 [data-testid="stBaseButton-tertiary"] { color: var(--text-dim); }
 [data-testid="stBaseButton-tertiary"]:hover { color: var(--text); text-decoration: underline; }
 button:disabled { opacity: 0.45; }
 
-/* HUD: sticky top bar */
+/* HUD: sticky top bar. Streamlit wraps the container in a box of its own height, so the wrapper is what sticks */
+[data-testid="stLayoutWrapper"]:has(> .st-key-hud) { position: sticky; top: 0; z-index: 99; }
 .st-key-hud {
-  position: sticky; top: 0; z-index: 99; background: var(--stage); border-bottom: 1px solid var(--line);
-  padding: var(--s1) var(--s3); margin: 0 0 var(--s4);
+  background: var(--stage); border-bottom: 1px solid var(--line);
+  padding: var(--s1) var(--s3); margin: 0 0 var(--s4); flex-wrap: nowrap;
 }
+.st-key-hud > [data-testid="stElementContainer"]:has(.gl-hud) { flex: 1 1 auto; min-width: 0; width: auto; }
+.st-key-hud > [data-testid="stElementContainer"]:has([data-testid="stPopover"]) { flex: 0 0 auto; }
 .gl-hud {
-  display: flex; align-items: center; flex-wrap: wrap; gap: var(--s3);
-  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-dim);
+  display: flex; align-items: center; flex-wrap: wrap; gap: var(--s1) var(--s3);
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-dim);
 }
+.gl-hud-right { display: inline-flex; align-items: center; gap: var(--s3); margin-left: auto; white-space: nowrap; }
 .gl-hud-brand { color: var(--brass); font-weight: 700; letter-spacing: 0.24em; }
 .gl-hud .modes { display: inline-flex; flex-wrap: wrap; gap: var(--s1); }
-.gl-chip { display: inline-block; padding: 1px 7px; border: 1px solid var(--line-strong); border-radius: var(--r-sm); color: var(--text-dim); }
+.gl-chip { display: inline-block; padding: 1px 6px; border: 1px solid var(--line-strong); border-radius: var(--r-sm); color: var(--text-dim); }
 .gl-chip.active { background: var(--brass); color: var(--brass-ink); border-color: var(--brass); }
 .gl-chip.done { color: var(--ok); border-color: #4D6248; }
 .gl-chip.open { color: var(--text); }
 .gl-chip.locked { opacity: 0.4; }
-.gl-hud-batt { display: inline-flex; align-items: center; gap: var(--s2); margin-left: auto; }
+.gl-hud-batt { display: inline-flex; align-items: center; gap: var(--s2); }
 .gl-cellbar { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--line-strong); border-radius: 2px; }
 .gl-cellbar i { width: 9px; height: 9px; background: var(--panel-2); }
 .gl-cellbar.ok i.on { background: var(--ok); }
@@ -113,6 +119,8 @@ button:disabled { opacity: 0.45; }
 [class*="st-key-stage_"]::after { bottom: 6px; right: 6px; border-bottom: 1px solid var(--line-strong); border-right: 1px solid var(--line-strong); }
 [class*="st-key-stage_"] [data-testid="stImage"] img { outline: 6px solid #000; border: 1px solid var(--line-strong); }
 [data-testid="stImage"] img { border-radius: 1px; }
+/* no fullscreen button on scene and evidence images */
+[data-testid="stElementContainer"]:has([data-testid="stImage"]) [data-testid="stElementToolbar"] { display: none; }
 
 /* scanner: the handheld device */
 [class*="st-key-scanner_"] {
@@ -125,6 +133,9 @@ button:disabled { opacity: 0.45; }
   border-bottom: 1px solid var(--line); padding-bottom: var(--s2); margin-bottom: var(--s3);
 }
 .gl-scanner-head span:first-child { color: var(--brass); }
+/* inputs take the secondary background, which is the scanner's own colour, so give them the stage colour */
+[class*="st-key-scanner_"] [data-testid="stTextInputRootElement"],
+[class*="st-key-scanner_"] [data-baseweb="select"] > div { background: var(--stage); border-color: var(--line-strong); }
 .gl-screen { background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--r-sm); padding: var(--s2) var(--s3); margin: var(--s2) 0; }
 .gl-status { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); }
 .gl-status .row { display: flex; justify-content: space-between; gap: var(--s2); margin-top: 3px; }
@@ -140,7 +151,9 @@ button:disabled { opacity: 0.45; }
 /* mode dial: a segmented row of buttons */
 [class*="st-key-dial_"] { gap: var(--s1); }
 [class*="st-key-dial_"] button { border-radius: var(--r-sm); font-family: var(--font-mono); text-transform: uppercase; letter-spacing: 0.08em; }
-.gl-dial-sub { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); margin: -6px 0 var(--s2); }
+.gl-dial-sub { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); margin: 2px 0 var(--s2); }
+/* Streamlit pulls markdown up by 1rem, which put the sublabel under the next button */
+[class*="st-key-dial_"] [data-testid="stMarkdownContainer"]:has(.gl-dial-sub) { margin-bottom: 0; }
 
 /* readouts: LCD look */
 .gl-readouts { display: flex; flex-wrap: wrap; border: 1px solid var(--line); background: var(--panel-2); border-radius: var(--r-sm); margin: var(--s2) 0 var(--s3); }
@@ -165,7 +178,13 @@ button:disabled { opacity: 0.45; }
 .gl-badge { display: inline-block; font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.04em; margin-top: var(--s1); padding: 1px 6px; border: 1px solid currentColor; border-radius: 2px; color: var(--text-dim); }
 .gl-badge.bad { color: var(--bad); }
 .gl-badge.warn { color: var(--warn); }
-.gl-loadnote { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); opacity: 0.8; margin-top: var(--s2); }
+.gl-badge.ok { color: var(--ok); }
+.gl-loadnote { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); opacity: 0.8; margin: var(--s2) 0 var(--s3); }
+/* the folded loadout: one row of small swap buttons under the loaded model */
+.st-key-l2_swap, .st-key-l3_swap, .st-key-l4_swap { gap: var(--s1); }
+.st-key-l2_swap button, .st-key-l3_swap button, .st-key-l4_swap button {
+  font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; min-height: 0; padding: 2px var(--s2);
+}
 .gl-limits { display: flex; flex-wrap: wrap; gap: var(--s4); font-family: var(--font-mono); font-size: 12px; color: var(--text-dim); margin: var(--s2) 0; }
 .gl-cost { font-family: var(--font-mono); font-size: 12px; margin: var(--s1) 0; color: var(--text-dim); }
 
@@ -214,20 +233,25 @@ button:disabled { opacity: 0.45; }
 [class*="st-key-side_card_"] { border: 1px dashed var(--line-strong); background: var(--panel); padding: var(--s3) var(--s4); margin: var(--s3) 0; border-radius: var(--r-md); }
 .gl-side .name { font-weight: 650; font-size: 1.05rem; margin: 2px 0 var(--s1); }
 .gl-side .blurb { color: var(--text-dim); font-size: 0.92rem; }
-.gl-side .chips { margin-top: var(--s2); }
+.gl-side .chips { margin: var(--s2) 0 var(--s3); }
 .gl-side .chip { display: inline-block; font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.06em; border: 1px solid var(--brass); color: var(--brass); padding: 0 6px; margin-right: var(--s1); }
 .gl-side .gl-stamp { margin-left: 6px; }
 
 /* checklist and tables */
 .gl-checklist { border: 1px solid var(--line); background: var(--panel); padding: var(--s2) var(--s3); margin: var(--s2) 0 var(--s3); border-radius: var(--r-sm); }
 .gl-checklist table { font-size: 12px; }
-.gl-checklist td { padding: 2px 10px 2px 0; vertical-align: top; }
+.gl-checklist table, .gl-checklist tr, .gl-checklist td { border: none; }
+.gl-checklist table { border-collapse: collapse; }
+.gl-checklist td { padding: 3px 10px 3px 0; vertical-align: top; border-bottom: 1px dashed var(--line); }
+.gl-checklist tr:last-child td { border-bottom: none; }
 .gl-checklist td.ok { color: var(--ok); }
 .gl-checklist td.bad { color: var(--bad); }
+.gl-ledger, .gl-casesum, .gl-ledger td, .gl-casesum td, .gl-ledger tr, .gl-casesum tr { border: none; }
 .gl-ledger, .gl-casesum { width: 100%; font-family: var(--font-mono); font-size: 12px; border-collapse: collapse; }
 .gl-ledger td, .gl-casesum td { padding: 3px 8px 3px 0; border-bottom: 1px dashed var(--line); vertical-align: top; }
 .gl-ledger td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
 .gl-casesum td:first-child { color: var(--text-dim); white-space: nowrap; }
+.gl-decisions, .gl-decisions tr, .gl-decisions th, .gl-decisions td { border: none; }
 .gl-decisions { width: 100%; font-size: 0.86rem; border-collapse: collapse; margin: var(--s1) 0 var(--s4); }
 .gl-decisions th { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-dim); text-align: left; font-weight: 400; padding: var(--s1) var(--s2) var(--s1) 0; border-bottom: 1px solid var(--line); }
 .gl-decisions td { padding: 5px var(--s2) 5px 0; border-bottom: 1px dashed var(--line); vertical-align: top; }
@@ -255,6 +279,8 @@ button:disabled { opacity: 0.45; }
 .gl-legend { font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); border-bottom: 1px solid var(--line); padding-bottom: var(--s2); margin-bottom: var(--s3); }
 .gl-legend b { color: var(--text); font-weight: 500; }
 .gl-review { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.08em; color: var(--ok); }
+[class*="st-key-review_"] [data-testid="stMarkdownContainer"]:has(.gl-review) { margin-bottom: 0; }
+[class*="st-key-review_"] [data-testid="stMarkdownContainer"] p { margin: 0; }
 [class*="st-key-review_"] { border: 1px solid var(--line); background: var(--panel); padding: 2px var(--s3); margin-bottom: var(--s3); border-radius: var(--r-sm); }
 
 @keyframes gl-stamp-in{0%{opacity:0;transform:rotate(-12deg) scale(2.4)}55%{opacity:1;transform:rotate(-7deg) scale(.94)}75%{transform:rotate(-7deg) scale(1.03)}100%{transform:rotate(-7deg) scale(1)}}
@@ -262,6 +288,9 @@ button:disabled { opacity: 0.45; }
 .gl-stamp-big.animate{animation:gl-stamp-in .45s cubic-bezier(.2,.8,.2,1) both}
 .gl-grade.animate{animation:gl-rise .35s .35s both}
 @media (prefers-reduced-motion:reduce){.animate{animation:none!important}}
+
+.st-key-cleared_actions [data-testid="stBaseButton-primary"] p { white-space: normal; text-align: left; }
+.st-key-debrief_evidence { max-width: 560px; }
 
 /* home */
 .gl-title { padding: var(--s6) 0 var(--s4); border-bottom: 1px solid var(--line); margin-bottom: var(--s5); }
@@ -277,6 +306,50 @@ button:disabled { opacity: 0.45; }
 .gl-card .name { font-weight: 650; margin: var(--s2) 0 var(--s1); }
 .gl-card .q { font-size: 0.9rem; color: var(--text-dim); }
 .gl-card .grade { font-family: var(--font-mono); font-weight: 700; color: var(--ok); margin-left: var(--s2); }
+.gl-card .grade.gC { color: var(--warn); } .gl-card .grade.gD { color: var(--bad); }
 .gl-closed-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s4); margin: var(--s3) 0 var(--s4); }
 .gl-closed-row .gl-grade { font-size: 30px; padding: 2px 10px; }
 .gl-closed-sum { font-family: var(--font-mono); font-size: 13px; color: var(--text-dim); }
+
+/* project page */
+.st-key-project { max-width: 64rem; }
+.gl-lead { color: var(--text); font-size: 1.02rem; max-width: 54rem; margin: 0 0 var(--s4); }
+.gl-edge td:first-child { width: 11rem; color: var(--brass); }
+.gl-edge td:last-child { font-family: var(--font-ui); font-size: 0.9rem; }
+.gl-flow { display: flex; align-items: stretch; gap: var(--s2); margin: var(--s2) 0; }
+.gl-flow .ch { flex: 0 0 5.5rem; font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.08em; color: var(--text-dim); padding-top: var(--s2); }
+.gl-flow .ch b { display: block; color: var(--brass); font-weight: 600; text-transform: uppercase; }
+.gl-flow .box { flex: 1 1 0; min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-sm); padding: var(--s2) var(--s3); font-size: 0.86rem; line-height: 1.35; }
+.gl-flow .box span { display: block; font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-dim); margin-bottom: 2px; }
+.gl-flow .arrow { align-self: center; color: var(--line-strong); font-family: var(--font-mono); }
+.gl-tablewrap { overflow-x: auto; margin: var(--s2) 0; }
+.gl-bench, .gl-bench th, .gl-bench td, .gl-bench tr { border: none; }
+.gl-bench { width: 100%; border-collapse: collapse; font-size: 0.86rem; }
+.gl-bench th { font-family: var(--font-mono); font-size: 11px; font-weight: 400; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-dim); text-align: left; padding: var(--s1) var(--s3) var(--s1) 0; border-bottom: 1px solid var(--line); white-space: nowrap; }
+.gl-bench td { padding: 4px var(--s3) 4px 0; border-bottom: 1px dashed var(--line); white-space: nowrap; }
+.gl-bench td.num { font-family: var(--font-mono); font-size: 12px; font-variant-numeric: tabular-nums; }
+.gl-bench td:nth-child(3), .gl-bench td:nth-child(4), .gl-bench td:nth-child(5) { text-align: right; }
+.gl-bench th:nth-child(3), .gl-bench th:nth-child(4), .gl-bench th:nth-child(5) { text-align: right; }
+.st-key-project code { font-size: 0.85em; }
+.st-key-home_footer { border-top: 1px solid var(--line); margin-top: var(--s5); padding-top: var(--s2); }
+.st-key-home_footer [data-testid="stPageLink"] p { white-space: normal; font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.06em; color: var(--text-dim); }
+
+/* the Menu popover: the divider doesn't need its full page margin */
+[data-testid="stPopoverBody"] hr { margin: var(--s2) 0; }
+
+/* phones: the HUD keeps to a few short lines and scrolls away with the page */
+@media (max-width: 640px) {
+  [data-testid="stLayoutWrapper"]:has(> .st-key-hud) { position: static; }
+  .gl-hud-right { margin-left: 0; gap: var(--s2); }
+  .st-key-hud { padding: 2px var(--s2); margin-bottom: var(--s3); }
+  .gl-hud { gap: 2px var(--s2); font-size: 10px; letter-spacing: 0.04em; line-height: 1.4; }
+  .gl-hud-brand, .gl-hud-mem, .gl-cellbar { display: none; }
+  .gl-hud .modes { gap: 2px; }
+  .gl-chip { padding: 0 4px; }
+  .gl-hud-batt { margin-left: 0; }
+  .gl-title .word { font-size: 30px; letter-spacing: 0.2em; }
+  .gl-flow { flex-wrap: wrap; }
+  .gl-flow .ch { flex-basis: 100%; padding-top: 0; }
+  .gl-flow .box { flex-basis: 40%; }
+  .gl-flow .arrow { display: none; }
+}

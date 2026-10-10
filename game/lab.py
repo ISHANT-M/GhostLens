@@ -276,7 +276,8 @@ def activation_frame(slope: float) -> pd.DataFrame:
 def activation_chart(df: pd.DataFrame, field: str, title: str) -> alt.Chart:
     scale = alt.Scale(domain=lab.ACTIVATIONS, range=ui.CHART)
     return alt.Chart(df, title=title).mark_line(strokeWidth=2).encode(
-        x=alt.X("x:Q"), y=alt.Y(f"{field}:Q", title=field), color=alt.Color("function:N", scale=scale))
+        x=alt.X("x:Q"), y=alt.Y(f"{field}:Q", title=field), color=alt.Color("function:N", scale=scale)
+    ).properties(height=300)
 
 
 def activations_tab() -> None:
@@ -574,9 +575,13 @@ def pruned_masks(seed: int) -> dict[float, np.ndarray]:
 
 
 def pruning_chart(df: pd.DataFrame) -> alt.Chart:
+    # same axis title on both layers, or Altair joins them into "latency ms, ms"
+    x_title = f"latency (ms) · dashed line = {BUDGET_MS:g} ms budget"
     bars = alt.Chart(df).mark_bar(color=ui.CHART[5]).encode(
-        x=alt.X("latency ms:Q"), y=alt.Y("model:N", sort=None, title=None))
-    rule = alt.Chart(pd.DataFrame({"ms": [BUDGET_MS]})).mark_rule(color=ui.CHART[3], strokeDash=[4, 3]).encode(x="ms:Q")
+        x=alt.X("latency ms:Q", title=x_title),
+        y=alt.Y("model:N", sort=None, title=None, axis=alt.Axis(labelLimit=260)))
+    rule = alt.Chart(pd.DataFrame({"ms": [BUDGET_MS]})).mark_rule(color=ui.CHART[3], strokeDash=[4, 3]).encode(
+        x=alt.X("ms:Q", title=x_title))
     return (bars + rule).properties(height=230)
 
 

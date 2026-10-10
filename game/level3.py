@@ -79,6 +79,10 @@ def names(items: list[dict]) -> str:
     return ", ".join(f"{n} × {label}" if n > 1 else label for label, n in counts.items())
 
 
+def plural(n: int, word: str) -> str:
+    return f"{n} {word}{'' if n == 1 else 's'}"
+
+
 def all_scores(dets: list[dict]) -> list[tuple[float, dict]]:
     return [(t, det.evaluate(dets, TRUTH["objects"], t)[1]) for t in THRESHOLDS]
 
@@ -180,12 +184,13 @@ def consequence(brief: str, m: dict, s: dict) -> tuple[str, str]:
         return (f"<b>Nothing missed,</b> but only {s['precision']:.0%} of your boxes are real. "
                 "The insurer wants 60%. Raise the threshold a little.", "bad")
     if s["recall"] == 1.0:
-        return (f"<b>You found everything</b> and accused {len(fp)} innocent objects ({names(fp)}). "
+        return (f"<b>You found everything</b> and accused {plural(len(fp), 'innocent object')} ({names(fp)}). "
                 "Low threshold: high recall, low precision.", "bad")
     if s["precision"] == 1.0:
         return (f"<b>Everything you flagged is real,</b> but {len(missed)} slipped past ({names(missed)}). "
                 "High threshold: high precision, low recall.", "bad")
-    return f"{len(fp)} false alarm(s) and {len(missed)} missed. Move the threshold and try again.", "warn"
+    return (f"{plural(len(fp), 'false alarm')} and {len(missed)} missed. Move the threshold and try again.",
+            "warn")
 
 
 def cant_meet_line(dets: list[dict], model: dict) -> str:
@@ -362,7 +367,8 @@ def sweep_chart(rows: list[dict], chosen: float) -> alt.Chart:
     df = pd.DataFrame([{"match_iou": r["match_iou"], "metric": label, "value": r[k]} for r in rows
                        for k, label in METRICS])
     lines = alt.Chart(df).mark_line(point=alt.OverlayMarkDef(size=18)).encode(
-        x=alt.X("match_iou:Q", title="IoU needed to count as correct", scale=alt.Scale(domain=[0.5, 0.95])),
+        x=alt.X("match_iou:Q", title="IoU needed to count as correct", scale=alt.Scale(domain=[0.5, 0.95]),
+                axis=alt.Axis(values=MATCH_IOUS, format=".2f")),
         y=alt.Y("value:Q", title=None, scale=alt.Scale(domain=[0, 1.05]), axis=alt.Axis(format="%")),
         color=alt.Color("metric:N", scale=METRIC_COLORS, legend=alt.Legend(orient="top", title=None)))
     now = alt.Chart(pd.DataFrame({"x": [chosen]})).mark_rule(color=ui.CHART[4], strokeDash=[4, 3]).encode(x="x:Q")
@@ -426,7 +432,7 @@ def numbers(r: dict, brief: str) -> None:
 
 def explore(r: dict) -> None:
     st.markdown('<div class="gl-kicker">How strict is "correct"?</div>', unsafe_allow_html=True)
-    chosen = st.select_slider("Matching IoU", MATCH_IOUS, value=0.5, key="l3_match_iou",
+    chosen = st.select_slider("Matching IoU", MATCH_IOUS, value=0.5, key="l3_match_iou", format_func="{:.2f}".format,
                               help="How much a box must overlap a labelled object to count as correct.")
     rows = match_sweep(r["dets"], TRUTH["objects"], r["threshold"], MATCH_IOUS)
     ui.chart(sweep_chart(rows, chosen))
@@ -445,8 +451,8 @@ def happened(r: dict) -> list[str]:
         lines.append(f"You loaded {' then '.join(tried)}: the first couldn't find the cups at any threshold.")
     for n, rep in enumerate(s.get("l3_reports", []), start=1):
         name = runtime.profile("detectors", rep["model"])["name"]
-        lines.append(f"Report {n}: {name} at {rep['threshold']:.2f}, {rep['tp']} found, {rep['fp']} false alarms, "
-                     f"{rep['fn']} missed, F1 {rep['f1']:.2f}.")
+        lines.append(f"Report {n}: {name} at {rep['threshold']:.2f}, {rep['tp']} found, "
+                     f"{plural(rep['fp'], 'false alarm')}, {rep['fn']} missed, F1 {rep['f1']:.2f}.")
     inspected = len(s.get("l3_inspected", ()))
     if inspected:
         lines.append(f"You inspected {inspected} box{'es' if inspected != 1 else ''} up close.")
@@ -514,6 +520,14 @@ def scanner_controls(c: case.Case, model: dict, dets: list[dict], solved: bool) 
     return threshold, shown, m, box
 
 
+def ready(c: case.Case) -> bool:
+    """The loaded detector already ran and can meet the brief, so nothing else needs charge.
+    If it can't meet the brief, the picker keeps the lobby charger in reach for a bigger one."""
+    s = st.session_state
+    model = s.get("l3_model")
+    return model in s.get("l3_ran", []) and can_meet(scene_detections(model), c.brief)
+
+
 def render() -> None:
     try:
         runtime.benchmark()
@@ -543,7 +557,7 @@ def render() -> None:
     view, scanner = ui.stage("l3")
     with scanner:
         ui.scanner_head("GHOSTLENS MK.II · DETECT", pct(s.battery))
-        model = flow.model_picker(3, profiles(), LIMITS, slot="watchdog", locked=solved)
+        model = flow.model_picker(3, profiles(), LIMITS, slot="watchdog", locked=solved, ready=ready(c))
     if model is None:
         with view:
             draw_parlour()
@@ -567,9 +581,9 @@ def render() -> None:
         img = det.draw(load_scene(), m) if m is not None else det.draw(load_scene(), dets=shown)
         if solved:
             img = with_moved(img, TRUTH["objects"][c.moved]["box"])
-        ui.evidence(rgb(with_inspected(img, box)),
-                    "EVIDENCE 05-C · GREEN = CORRECT · RED = FALSE ALARM · DASHED AMBER = MISSED" if m is not None
-                    else f"EVIDENCE 05-C · GHOSTLENS DETECT MODE · {model['name'].upper()} · BOXES ≥ {threshold:.2f}")
+        caption = ("EVIDENCE 05-C · GREEN = CORRECT · RED = FALSE ALARM · DASHED AMBER = MISSED" if m is not None
+                   else f"EVIDENCE 05-C · GHOSTLENS DETECT MODE · {model['name'].upper()} · BOXES ≥ {threshold:.2f}")
+        ui.evidence(rgb(with_inspected(img, box)), caption + (" · SOLID AMBER = MOVED" if solved else ""))
 
     if solved:
         return

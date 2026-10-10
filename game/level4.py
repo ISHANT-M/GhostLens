@@ -180,19 +180,25 @@ def report_checks(profile: dict) -> dict:
         "Right task": (misses == 0, "segmentation first time" if misses == 0
                        else f"tried {', '.join(m for m in s.l4_tried if m != 'Segment')} first"),
         "Met every limit first time": (tried == 1, "first purification passed" if tried == 1
-                                       else f"{tried - 1} failed purification attempt(s)"),
+                                       else f"{tried - 1} failed purification attempt{'s' if tried > 2 else ''}"),
         "Latency target": (profile["latency_ms"] <= LIMITS["latency_ms"], f"≤ {LIMITS['latency_ms']} ms"),
         "Battery": (efficient(used, par()), f"{pct(used)} used, {pct(par())} would have done it"),
     }
 
 
-def purify_checks(model: dict, iou: float, threshold: float, cleaned: bool = False) -> dict[str, tuple[bool, str]]:
+def purify_checks(model: dict, iou: float, threshold: float, cleaned: bool = False,
+                  raw_iou: float | None = None) -> dict[str, tuple[bool, str]]:
     """Every limit the purification needs, with a measured detail for each."""
     s = st.session_state
     model_ok, wall_ok = model["iou"] >= LIMITS["iou"], iou >= LIMITS["iou"]
     fast = model["latency_ms"] <= LIMITS["latency_ms"]
     used = device.memory_used(s)
-    hint = " Try a mask threshold nearer 0.5." if model_ok and not wall_ok else ""
+    hint = ""
+    if model_ok and not wall_ok:
+        if cleaned and raw_iou is not None and raw_iou >= LIMITS["iou"]:
+            hint = f" Without cleanup it was {raw_iou:.3f}: switch the cleanup off."
+        elif abs(threshold - 0.5) > 1e-9:
+            hint = " Try a mask threshold nearer 0.5."
     after = " after cleanup" if cleaned else ""
     return {
         f"Model IoU ≥ {LIMITS['iou']} (150 walls)": (model_ok, f"{model['iou']:.3f}" + (
@@ -209,6 +215,8 @@ def purify_checks(model: dict, iou: float, threshold: float, cleaned: bool = Fal
 
 def failure_line(checks: dict) -> str:
     failed = [name for name, (ok, _) in checks.items() if not ok]
+    if all(name.startswith("This wall") for name in failed):   # the model is fine, the mask settings aren't
+        return f"<b>Purification failed:</b> {', '.join(failed)}. Adjust the mask threshold or the cleanup."
     return f"<b>Purification failed:</b> {', '.join(failed)}. Try a different model, or quantize this one."
 
 
@@ -256,7 +264,7 @@ def purify(model: dict, iou: float, raw_iou: float, threshold: float, open_k: in
     """Returns the failed checks, or finishes the chapter."""
     s = st.session_state
     s.l4_purify_tries = s.get("l4_purify_tries", 0) + 1
-    checks = purify_checks(model, iou, threshold, cleaned=bool(open_k or close_k))
+    checks = purify_checks(model, iou, threshold, cleaned=bool(open_k or close_k), raw_iou=raw_iou)
     if not all(ok for ok, _ in checks.values()):
         return checks
     s.l4_deployed = {"id": model["id"], "name": model["name"], "variant": model["variant"],
@@ -279,18 +287,22 @@ def frontier_chart(rows: list[dict]) -> alt.Chart:
     df = pd.DataFrame(rows)
     lo = min(df.iou.min(), LIMITS["iou"]) - 0.01
     top = df.iou.max() + 0.005
+    # every layer gets the same scales, or the shaded box drags the IoU axis down to 0
+    xs, ys = alt.Scale(domainMin=0), alt.Scale(domain=[lo, top], zero=False)
     box = alt.Chart(pd.DataFrame({"x": [0], "x2": [LIMITS["latency_ms"]], "y": [LIMITS["iou"]], "y2": [top]})).mark_rect(
-        color=ui.CHART[1], opacity=0.14).encode(x="x:Q", x2="x2:Q", y="y:Q", y2="y2:Q")
-    x = alt.X("latency_ms:Q", title="latency, ms (measured)", scale=alt.Scale(domainMin=0))
-    y = alt.Y("iou:Q", title="mask IoU, 150 walls", scale=alt.Scale(domain=[lo, top]))
+        color=ui.CHART[1], opacity=0.14).encode(x=alt.X("x:Q", scale=xs), x2="x2:Q", y=alt.Y("y:Q", scale=ys), y2="y2:Q")
+    x = alt.X("latency_ms:Q", title="latency, ms (measured)", scale=xs)
+    y = alt.Y("iou:Q", title="mask IoU, 150 walls", scale=ys)
     arrows = alt.Chart(df).mark_line(color=ui.CHART[4], strokeDash=[4, 3]).encode(x=x, y=y, detail="variant:N")
     colors = alt.Scale(domain=["FP32", "INT8"], range=[ui.CHART[4], ui.CHART[0]])
     points = alt.Chart(df).mark_point(filled=True, size=80).encode(
         x=x, y=y, color=alt.Color("precision:N", scale=colors, legend=alt.Legend(orient="top", title=None)),
         tooltip=["name:N", "latency_ms:Q", "iou:Q", "size_mb:Q"])
-    labels = alt.Chart(df).mark_text(align="left", dx=7, dy=-6, fontSize=11, color=ui.CHART[4]).encode(
-        x=x, y=y, text="name:N")
-    return (box + arrows + points + labels).properties(height=280, title="INT8 moves left, not down")
+    # short labels, FP32 above its point and INT8 below, so the Lite pair doesn't overlap
+    df["label"] = df["name"].str.removeprefix("U-Net ")
+    labels = [alt.Chart(df[df.precision == p]).mark_text(align="left", dx=7, dy=dy, fontSize=11, color=ui.CHART[4])
+              .encode(x=x, y=y, text="label:N") for p, dy in (("FP32", -8), ("INT8", 14))]
+    return alt.layer(box, arrows, points, *labels).properties(height=280, title="INT8 moves left, not down")
 
 
 @st.cache_data(show_spinner=False)
@@ -468,6 +480,15 @@ def stage_view(model: dict, probs: np.ndarray, mask: np.ndarray, threshold: floa
         ui.evidence(rgb(with_mask(img, mask)), f"WALL #{seed} · SEGMENTATION · {model['name'].upper()}")
 
 
+def ready() -> bool:
+    """The loaded U-Net already ran and meets the model limits, so the picker can fold away."""
+    s = st.session_state
+    if s.get("l4_model") not in s.get("l4_ran", []):
+        return False
+    r = runtime.profile("unets", s.l4_model)
+    return r["iou"] >= LIMITS["iou"] and r["latency_ms"] <= LIMITS["latency_ms"]
+
+
 def render() -> None:
     try:
         runtime.benchmark()
@@ -503,7 +524,8 @@ def render() -> None:
             s.l4_int8 = str(s.get("l4_model", "")).endswith("-int8")
         int8 = st.toggle("Quantize to INT8", key="l4_int8", disabled=solved,
                          help="Post-training quantization: 8-bit weights and activations instead of 32-bit floats.")
-        model = flow.model_picker(4, profiles(int8), LIMITS, slot="task", locked=solved)
+        model = flow.model_picker(4, profiles(int8), LIMITS, slot="task", locked=solved, ready=ready(),
+                                  footer="ms/MB and IoU measured here · battery = game rule")
     if model is None:
         with view:
             draw_wall()

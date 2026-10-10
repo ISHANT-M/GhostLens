@@ -185,3 +185,15 @@ def test_describe_and_settings_from():
     s = level1.settings_from({"l1_gamma": 2.4, "l1_contrast": 2.5, "l1_equalizer": "CLAHE"})
     assert level1.describe(s) == "gamma 2.4, contrast ×2.5, CLAHE clip 2"
     assert level1.describe(level1.settings_from({})) == "nothing switched on"
+
+
+def test_par_is_timed_once_and_stored():
+    at = solve_ch1(page(1), CASE.number)
+    s = at.session_state
+    par = s.l1_par
+    report = s.l1_report["checks"]["Battery"][1]
+    assert report.endswith(f"{device.pct(par)} would have done it")
+    for _ in range(3):                                     # re-rendering the cleared screen doesn't re-time it
+        at.run()
+        assert at.session_state.l1_par == par
+    assert f"<tr><td>Par</td><td>{device.pct(par)}</td></tr>" in texts(at)

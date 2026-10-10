@@ -1,4 +1,4 @@
-"""Chapter list, chapter endings, the title screen, the lock screen, the case summary and the about page."""
+"""Chapter list, chapter endings, the title screen, the lock screen, the case summary and the project page."""
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -175,7 +175,8 @@ def bullets(items: list[str]) -> str:
 def debrief_tab(n: int, c: Cleared) -> None:
     s = st.session_state
     if c.evidence:
-        c.evidence()
+        with st.container(key="debrief_evidence"):
+            c.evidence()
     st.markdown(f'<div class="gl-kicker">What happened</div>{bullets(c.happened)}'
                 f'<div class="gl-kicker">Why it worked</div>{bullets(c.why)}'
                 f'<div class="gl-concept">{c.concept}<span>{MODULES[n]}</span></div>', unsafe_allow_html=True)
@@ -210,10 +211,9 @@ def level_cleared(n: int, c: Cleared) -> None:
         s.pop("just_cleared")
     with st.container(key="cleared"):
         st.markdown(cleared_head_html(n, c.headline, animate), unsafe_allow_html=True)
-        a, b, _ = st.columns([1.6, 1, 2])
-        a.button(continue_label(n), key=f"l{n}_continue", type="primary", width="stretch",
-                 on_click=_continue, args=(n,))
-        b.button("Back to the scene", key=f"l{n}_back", type="tertiary", on_click=_review, args=(n, True))
+        with st.container(key="cleared_actions", horizontal=True, vertical_alignment="center"):
+            st.button(continue_label(n), key=f"l{n}_continue", type="primary", on_click=_continue, args=(n,))
+            st.button("Back to the scene", key=f"l{n}_back", type="tertiary", on_click=_review, args=(n, True))
         debrief, numbers, bonus = st.tabs(["Debrief", "Numbers", "Bonus scan"])
         with debrief:
             debrief_tab(n, c)
@@ -249,7 +249,7 @@ def chapter_card_html(n: int, store) -> str:
     info = LEVELS[n]
     status = state.status(store, n)
     grade = store.get("grades", {}).get(n)
-    mark = f'<span class="grade">{grade}</span>' if grade else ""
+    mark = f'<span class="grade g{grade}">{grade}</span>' if grade else ""
     mode = info["mode"] + " · " if n in store["completed_levels"] else ""
     return (f'<div class="gl-card {status}"><div class="top"><span class="num">CHAPTER {n}</span>'
             f'<span>{ui.stamp(status)}{mark}</span></div><div class="name">{info["title"]}</div>'
@@ -279,6 +279,9 @@ def home() -> None:
     if state.all_solved(s):
         st.divider()
         case_closed()
+    if "about" in nav.PAGES:
+        with st.container(key="home_footer"):
+            st.page_link(nav.PAGES["about"], label="Project · UCS668 Edge AI course project")
 
 
 # the case summary, shown on the home page and at the end of chapter 4
@@ -309,15 +312,17 @@ def battery_rows() -> list[tuple[str, str]]:
     trips = d["lobby_trips"]
     lobby = (f"<span class='bad'>{trips} · +{pct(trips * device.CHARGER_UNITS)} · "
              f"−{trips * device.CHARGER_XP} XP</span>") if trips else "none"
-    return [
+    cells = d["spare_cells"]
+    rows = [
         ("Start", pct(d["start"])),
         ("Chapter runs", f"−{pct(d['spent_main'])}"),
         ("Side scans", f"−{pct(d['spent_side'])}"),
-        ("Spare cells", f"<span class='ok'>{d['spare_cells']} · +{pct(d['spare_cells'] * device.A_GRADE_UNITS)}</span>"),
+        ("Spare cells", f"<span class='ok'>{cells} · +{pct(cells * device.A_GRADE_UNITS)}</span>" if cells else "none"),
         ("Lobby trips", lobby),
-        ("Lowest", pct(d["lowest"])),
-        ("Left", f"<b>{pct(d['left'])}</b>"),
     ]
+    if d["reserve"]:   # light runs past 0 were charged in full, so the rows only add up with this one
+        rows.append(("Emergency reserve", f"+{pct(d['reserve'])}"))
+    return rows + [("Lowest", pct(d["lowest"])), ("Left", f"<b>{pct(d['left'])}</b>")]
 
 
 def epilogue(c: case.Case) -> str:
@@ -476,21 +481,129 @@ def case_closed() -> None:
                            file_name=f"ghostlens_case_{c.seed}.md", mime="text/markdown", type="tertiary")
 
 
-def about() -> None:
-    ui.scene_header("ABOUT", "About GhostLens",
-                    "A small learning game for UCS668 Edge AI and Robotics: Data Center Vision.")
-    st.markdown(
-        """
-**Team:** Ishant Mehndiratta, Satyam Tiwari, Ishaan Sharma
-**Course:** UCS668, Thapar Institute of Engineering & Technology (Prof. Jhilik Bhattacharya)
+# the project page (route /about, kept from before so old links and tests still work)
 
-GhostLens is an edge device: limited battery, limited memory, a latency target for every mission. The game is about
-picking the cheapest computer vision task and the smallest model that still answer the question.
-"""
-    )
-    st.markdown("#### What's real and what's a game rule")
+REPO = "https://github.com/ISHANT-M/GhostLens"
+TEAM = "Ishant Mehndiratta, Satyam Tiwari, Ishaan Sharma"
+
+# per chapter: (input, technique, model, metric)
+PIPELINE = {
+    1: ("dark CCTV frame", "OpenCV gamma, contrast, CLAHE, denoise", "none, no network",
+        "legibility, clipping, histogram"),
+    2: ("one object per photo, then a room photo", "image classification, sliding window sweep",
+        "YOLO26n / s / m-cls", "top-1 label, latency"),
+    3: ("parlour photo, hand-labelled boxes", "object detection, confidence threshold",
+        "YOLO26n / s / m", "precision, recall, F1 at IoU 0.5"),
+    4: ("generated stained walls", "semantic segmentation, morphology, INT8 PTQ",
+        "TinyUNet Lite / Standard / Pro", "mask IoU on 150 walls"),
+}
+TASKS = {"classifiers": "Classification", "detectors": "Detection", "segmenters": "Instance segmentation",
+         "unets": "Semantic segmentation"}
+
+
+def pipeline_html() -> str:
+    steps = ("Input", "Technique", "Model", "Metric")
+    rows = []
+    for n, parts in PIPELINE.items():
+        boxes = '<span class="arrow">→</span>'.join(
+            f'<div class="box"><span>{label}</span>{text}</div>' for label, text in zip(steps, parts))
+        rows.append(f'<div class="gl-flow"><div class="ch">CH {n}<b>{LEVELS[n]["mode"]}</b></div>{boxes}</div>')
+    return "".join(rows)
+
+
+def benchmark_rows(bench: dict) -> list[dict]:
+    """One row per model in benchmark.json: what it is, what it costs, and how good it is (and who says so)."""
+    rows = []
+    for group in ("classifiers", "detectors", "segmenters"):
+        for r in bench.get(group, []):
+            measured = f"F1 {r['best_f1']:.2f}" if "best_f1" in r else "–"
+            rows.append({"model": r["name"], "task": TASKS[group], "size_mb": r["size_mb"],
+                         "latency_ms": r["latency_ms"], "published": r["published"], "measured": measured})
+    for r in bench.get("unets", []):
+        rows.append({"model": f"{r['name']} {r['precision']}", "task": TASKS["unets"], "size_mb": r["size_mb"],
+                     "latency_ms": r["latency_ms"], "published": "–", "measured": f"IoU {r['iou']:.3f}"})
+    return rows
+
+
+def benchmark_table_html(bench: dict) -> str:
+    head = ("<tr><th>Model</th><th>Task</th><th>Size MB</th><th>Latency ms</th><th>Battery / run</th>"
+            f"<th>Accuracy {ui.tag('published')}</th><th>Score {ui.tag('measured')}</th></tr>")
+    body = "".join(
+        f"<tr><td>{r['model']}</td><td>{r['task']}</td><td class='num'>{r['size_mb']:.2f}</td>"
+        f"<td class='num'>{r['latency_ms']:.1f}</td><td class='num'>{pct(energy(r['latency_ms']))}</td>"
+        f"<td class='num'>{r['published']}</td><td class='num'>{r['measured']}</td></tr>"
+        for r in benchmark_rows(bench))
+    return f'<div class="gl-tablewrap"><table class="gl-bench">{head}{body}</table></div>'
+
+
+def energy(latency_ms: float) -> int:
+    from cv.edge import energy_units
+    return energy_units(latency_ms)
+
+
+def edge_points(bench: dict | None) -> list[tuple[str, str]]:
+    from game import level2, level3, level4
+    int8 = "Post-training static quantization (PyTorch FX), calibrated on 64 walls."
+    if bench:
+        smaller, faster, delta = int8_ratios(bench)
+        int8 += f" U-Net Standard gets {smaller:.1f}× smaller and {faster:.1f}× faster for {delta:+.3f} IoU."
+    limits = (f"ch 1 one frame at 30 fps (33 ms) · ch 2 {level2.LIMITS['latency_ms']} ms · "
+              f"ch 3 {level3.LIMITS['latency_ms']} ms · ch 4 {level4.LIMITS['latency_ms']} ms")
+    return [
+        ("On-device, offline", "Every model runs in the app's own process on the CPU. Ultralytics is set to offline "
+                               "mode, so after setup nothing is downloaded and no image leaves the machine."),
+        ("Memory budget", f"{device.MEMORY_MB:.0f} MB for loaded models. A model that doesn't fit can't be picked, "
+                          "and the chapter 3 watchdog stays loaded into chapter 4."),
+        ("Latency budget", f"A per-frame limit for every mission: {limits}."),
+        ("Energy", f"Charged from measured compute: 1 ms = 1 unit = 0.1% of a full pack. The case starts at "
+                   f"{pct(device.BATTERY_START)}."),
+        ("INT8 quantization", int8),
+        ("Model selection", "Each chapter picks the task first, then the smallest model that meets the latency, "
+                            "memory and accuracy limits together. The most accurate model is never the default."),
+    ]
+
+
+def benchmark_section(bench: dict) -> None:
+    from cv import edge
+    machine, stored = edge.benchmark_machine(bench)
+    where = "recorded in benchmark.json" if stored else "this machine; benchmark.json doesn't record one"
     st.markdown(
-        f"""
+        f'<div class="gl-loadnote">CPU only, median of 12 runs (8 for the U-Nets), from '
+        f'<code>models/benchmark.json</code>. Machine: {machine} ({where}).</div>'
+        + benchmark_table_html(bench)
+        + '<div class="gl-loadnote">YOLO26 accuracy is the Ultralytics figure (ImageNet top-1, COCO mAP), not '
+          "re-run. F1 is on our labelled parlour photo, IoU on 150 validation walls.</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def project() -> None:
+    from cv import edge
+    ui.scene_header("PROJECT · UCS668 EDGE AI AND ROBOTICS", "GhostLens",
+                    "A computer vision course project, built as a short game that runs on a laptop CPU.")
+    with st.container(key="project"):
+        st.markdown(
+            '<p class="gl-lead">A handheld camera has to answer four questions about a hotel case with a small '
+            "battery, 32 MB for models and a time limit per frame. Each question needs a different computer "
+            "vision task: image enhancement, classification, detection and segmentation. The project shows how "
+            "to pick the cheapest task that answers a question, and the smallest model that still does it, "
+            "using numbers measured on the machine the game runs on.</p>",
+            unsafe_allow_html=True,
+        )
+        bench = edge.load_benchmark()   # read only: the page never starts a benchmark run
+        st.markdown('<div class="gl-kicker">Edge AI in this project</div>'
+                    + ui.kv_table(edge_points(bench), cls="gl-casesum gl-edge"), unsafe_allow_html=True)
+        st.markdown('<div class="gl-kicker">Computer vision pipeline, chapter by chapter</div>' + pipeline_html(),
+                    unsafe_allow_html=True)
+        st.markdown('<div class="gl-kicker">Measured benchmark</div>', unsafe_allow_html=True)
+        if bench is None:
+            st.caption("No models/benchmark.json yet. Run `python setup_models.py` to download, train and time the "
+                       "models on this machine.")
+        else:
+            benchmark_section(bench)
+        st.markdown('<div class="gl-kicker">What\'s real and what\'s a game rule</div>', unsafe_allow_html=True)
+        st.markdown(
+            f"""
 {ui.tag("measured")} computed on this machine: image processing, every model prediction, precision/recall and IoU
 against our own labels, model file sizes, and inference latency (median of several runs, CPU, measured by `setup_models.py`).
 
@@ -499,23 +612,26 @@ against our own labels, model file sizes, and inference latency (median of sever
 {ui.tag("gameplay")} the battery scale (1 ms of measured compute costs 0.1% of a full pack), the 32 MB memory size,
 and mission limits. They are rules we chose so the measured numbers turn into decisions.
 """,
-        unsafe_allow_html=True,
-    )
-    st.markdown(flow.rules_html(), unsafe_allow_html=True)
-    st.markdown("#### Every case is different")
-    st.markdown(
-        "Each new case draws its room photo, anchor object, client brief, moved cup and stained wall from a small "
-        "pool, using one random number. Every option in the pool is checked by the tests with the real models: "
-        "the right choice always works and the wrong ones always fail. Add `?case=1234` to the address to replay "
-        "a particular case."
-    )
-    st.markdown("#### Models")
-    st.markdown(
-        "- **YOLO26n / s / m-cls** (ImageNet) for classification\n"
-        "- **YOLO26n / s / m** (COCO) for detection, **YOLO26s-seg** for instance segmentation\n"
-        "- **Tiny U-Net Lite / Standard / Pro** (ours, plain PyTorch, trained on generated walls), "
-        "plus an INT8 version of each made with post-training quantization"
-    )
-    st.markdown("#### Credits")
-    st.markdown("Photos from Wikimedia Commons, see `assets/ATTRIBUTION.md`. "
-                "Background sound is synthesised by our own script, `scripts/make_ambience.py`.")
+            unsafe_allow_html=True,
+        )
+        st.markdown(flow.rules_html(), unsafe_allow_html=True)
+        st.markdown('<div class="gl-kicker">Every case is different</div>', unsafe_allow_html=True)
+        st.markdown(
+            "Each new case draws its room photo, anchor object, client brief, moved cup and stained wall from a small "
+            "pool, using one random number. Every option in the pool is checked by the tests with the real models: "
+            "the right choice always works and the wrong ones always fail. Add `?case=1234` to the address to replay "
+            "a particular case."
+        )
+        course = [
+            ("Course", "UCS668 Edge AI and Robotics: Data Center Vision, Thapar Institute of Engineering &amp; "
+                       "Technology (Prof. Jhilik Bhattacharya)"),
+            ("Team", TEAM),
+            ("Code", f'<a href="{REPO}" target="_blank">{REPO.removeprefix("https://")}</a> · MIT licence'),
+            ("Credits", "Photos from Wikimedia Commons, see <code>assets/ATTRIBUTION.md</code>. Background sound "
+                        "is made by our own script, <code>scripts/make_ambience.py</code>."),
+        ]
+        st.markdown('<div class="gl-kicker">Course and team</div>' + ui.kv_table(course, cls="gl-casesum"),
+                    unsafe_allow_html=True)
+
+
+about = project  # the page is still served at /about

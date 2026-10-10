@@ -62,6 +62,9 @@ def chart(c: alt.Chart) -> None:
          .configure_axis(labelColor=dim, titleColor=dim, gridColor=line, domainColor=line, tickColor=line)
          .configure_legend(labelColor=text, titleColor=dim)
          .configure_title(color=text))
+    if isinstance(c, (alt.Chart, alt.LayerChart)):
+        # Streamlit's default "fit" squeezes the legend and axes into the height; fit-x keeps it for the plot
+        c = c.properties(autosize=alt.AutoSizeParams(type="fit-x", contains="padding"))
     st.altair_chart(c, width="stretch")
 
 
