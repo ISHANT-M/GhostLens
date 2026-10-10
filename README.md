@@ -207,7 +207,7 @@ will be a little different; the game uses whatever `setup_models.py` measured on
 | YOLO26 ImageNet top-1 and COCO mAP | Published by Ultralytics, not re-measured |
 | Battery scale, 32 MB, latency limits, pass marks, XP, grades, badges | Game rules |
 
-The cleared screens, the model loadout and the About page all repeat this split. See
+The cleared screens, the model loadout and the Project page all repeat this split. See
 [docs/SYLLABUS.md](docs/SYLLABUS.md) for where each syllabus topic is covered.
 
 ## Project layout
@@ -220,7 +220,7 @@ game/               rules and pages
   scoring.py        XP, edge grade, battery efficiency check
   case.py           the random case: photo, anchor, brief, moved cup, walls
   flow.py           loading screen, HUD, mode dial, model loadout, paid run buttons, side scans, checklists
-  levels.py         chapter list, LEVEL CLEARED screen, home, case closed, About
+  levels.py         chapter list, LEVEL CLEARED screen, home, case closed, Project page
   level1-4.py       the four chapters
   lab.py            HQ Workbench (nine benches)
   codex.py          Field guide: tips, glossary, badges
