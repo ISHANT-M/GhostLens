@@ -14,7 +14,10 @@ computed on your machine. The few numbers that aren't are labelled.
 
 ## Install and run
 
-Tested on macOS (Apple M3) with Python 3.12. Linux should work but we haven't tried it.
+Works on macOS, Windows and Linux with Python 3.11 or 3.12. You need about 1.5 GB of free disk space. A GPU is
+optional: inference always runs on the CPU (that's the edge part), and a GPU only speeds up the one-time U-Net training.
+
+### macOS (Apple Silicon or Intel)
 
 ```bash
 git clone https://github.com/ISHANT-M/GhostLens.git && cd GhostLens
@@ -23,13 +26,53 @@ source .venv/bin/activate
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 
-python setup_models.py        # once, needs internet: YOLO26 weights, trains 3 U-Nets (~5 min), benchmarks every model
-streamlit run app.py          # http://localhost:8501
+python setup_models.py        # once, needs internet: YOLO26 weights, trains 3 U-Nets, benchmarks every model
+streamlit run app.py          # opens http://localhost:8501
 ```
 
+On Apple Silicon the U-Net training uses the GPU through MPS automatically.
+
+### Windows (with or without an NVIDIA GPU)
+
+Install Python 3.12 from python.org (tick "Add python.exe to PATH") and Git for Windows. Then in PowerShell:
+
+```powershell
+git clone https://github.com/ISHANT-M/GhostLens.git
+cd GhostLens
+py -3.12 -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+```
+
+If you have an NVIDIA GPU, install the CUDA build of PyTorch first (check https://pytorch.org/get-started/locally/
+for the right CUDA version for your driver; `nvidia-smi` shows it):
+
+```powershell
+pip install torch torchvision --index-url https://download.pytorch.org/whl/cu126
+```
+
+Without an NVIDIA GPU, skip that line. Then:
+
+```powershell
+pip install -r requirements.txt
+python setup_models.py
+streamlit run app.py
+```
+
+If PowerShell refuses to run `Activate.ps1`, run `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` once, or use
+`.venv\Scripts\activate.bat` from Command Prompt instead. With a CUDA build installed, training picks the GPU on its
+own; `python -c "import torch; print(torch.cuda.is_available())"` should print `True`.
+
+### Linux
+
+Same as macOS. For an NVIDIA GPU, install the CUDA build of PyTorch first as in the Windows steps.
+
+### Notes
+
 `setup_models.py` downloads about 140 MB of weights, trains our three small U-Nets and times every model on your CPU.
-The results go to `models/benchmark.json`, and the game reads its costs from there. You need about 1.5 GB of disk for
-the virtual environment.
+The results go to `models/benchmark.json`, and the game reads its costs from there, so the battery costs in the game
+match your own machine. INT8 uses the qnnpack backend on ARM and x86/fbgemm on Intel and AMD; the code picks the one
+your PyTorch supports.
 
 Optional:
 
@@ -178,9 +221,9 @@ Engineering & Technology, taught by Prof. Jhilik Bhattacharya.
 - **Model selection under constraints.** In every chapter the model is chosen by size, latency and accuracy together.
   The most accurate one is never the answer by default.
 
-### Measured on a MacBook Air M3
+### Measured on our laptop (MacBook Air M3)
 
-CPU only, median of 12 runs (8 for the U-Nets), from `models/benchmark.json`. Accuracy for YOLO26 is the published
+Your numbers will differ: `setup_models.py` re-measures everything on your machine. CPU only, median of 12 runs (8 for the U-Nets), from `models/benchmark.json`. Accuracy for YOLO26 is the published
 Ultralytics figure; U-Net IoU is measured on 150 validation walls; "best F1" is on our labelled parlour photo.
 
 | Model | Size | Latency | Battery per run | Accuracy |
@@ -246,7 +289,7 @@ tests/              pytest, including headless play-throughs with Streamlit AppT
 ```
 
 Progress lives in `st.session_state`. Models are cached with `st.cache_resource` and per-image results with
-`st.cache_data`. All inference runs on the CPU; only U-Net training uses Apple's MPS when it's there.
+`st.cache_data`. All inference runs on the CPU; only U-Net training uses a GPU when there is one (CUDA on NVIDIA, MPS on Apple Silicon).
 
 ## Tests
 
