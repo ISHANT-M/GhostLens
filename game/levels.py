@@ -484,7 +484,7 @@ def case_closed() -> None:
 # the project page (route /about, kept from before so old links and tests still work)
 
 REPO = "https://github.com/ISHANT-M/GhostLens"
-TEAM = "Ishant Mehndiratta, Satyam Tiwari, Ishaan Sharma"
+TEAM = "Ishant Mehndiratta, Satyam Tiwari, Ishaan Sharma, Hiten Mohindra"
 
 # per chapter: (input, technique, model, metric)
 PIPELINE = {

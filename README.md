@@ -204,7 +204,7 @@ Inspector and the anti-badge Running on fumes). Restarting the case keeps the ti
 GhostLens is our course project for **UCS668 Edge AI and Robotics: Data Center Vision** at Thapar Institute of
 Engineering & Technology, taught by Prof. Jhilik Bhattacharya.
 
-**Team:** Ishant Mehndiratta, Satyam Tiwari, Ishaan Sharma
+**Team:** Ishant Mehndiratta, Satyam Tiwari, Ishaan Sharma, Hiten Mohindra
 
 ### Edge AI in this project
 
